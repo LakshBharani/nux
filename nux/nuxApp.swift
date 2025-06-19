@@ -13,5 +13,15 @@ struct nuxApp: App {
         WindowGroup {
             ContentView()
         }
+        .commands {
+            CommandMenu("AI Assistant") {
+                Button("Toggle AI Assist Mode") {
+                    NotificationCenter.default.post(name: .toggleAIAssist, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: .command)
+            }
+        }
+        .windowResizability(.contentSize)
     }
 }
+
