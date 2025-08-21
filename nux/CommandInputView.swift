@@ -100,6 +100,29 @@ struct CommandInputView: View {
                     return .handled
                 }
         }
+        .overlay(alignment: .trailing) {
+            // Tab hint to indicate activating autocomplete popup
+            if !autocomplete.allSuggestions.isEmpty && !autocomplete.showDropdown {
+                HStack(spacing: 6) {
+                    Text("⇥")
+                        .font(.system(size: 11, weight: .semibold, design: .default))
+                        .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.75))
+                    Text("Tab")
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                        .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.55))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(themeManager.currentTheme.backgroundColor.opacity(0.6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(themeManager.currentTheme.foregroundColor.opacity(0.2), lineWidth: 1)
+                )
+                .cornerRadius(6)
+                .padding(.trailing, 2)
+                .allowsHitTesting(false)
+            }
+        }
     }
     
     // MARK: - Helper Methods

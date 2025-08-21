@@ -9,7 +9,7 @@ struct TerminalTab: Identifiable, Equatable {
         self.id = UUID()
         self.session = session
         // Avoid cross-actor access to session properties here; will be shown live by TabLabelView
-        self.title = title ?? "nux"
+        self.title = title ?? "New Terminal"
     }
     
     static func == (lhs: TerminalTab, rhs: TerminalTab) -> Bool {
@@ -21,9 +21,9 @@ struct TerminalTab: Identifiable, Equatable {
     static func deriveTitle(from session: TerminalSession) -> String { titleFromPath("") }
     
     static func titleFromPath(_ path: String) -> String {
-        guard !path.isEmpty else { return "nux" }
+        guard !path.isEmpty else { return "New Terminal" }
         let components = URL(fileURLWithPath: path).pathComponents.filter { $0 != "/" && !$0.isEmpty }
-        if components.isEmpty { return "nux" }
+        if components.isEmpty { return "New Terminal" }
         let lastTwo = components.suffix(2)
         return lastTwo.joined(separator: "/")
     }
@@ -33,6 +33,9 @@ struct TerminalTabsView: View {
     @State private var tabs: [TerminalTab] = []
     @State private var selectedTabId: UUID?
     @EnvironmentObject private var themeManager: ThemeManager
+    @State private var renamingTabId: UUID? = nil
+    @State private var renamingText: String = ""
+    @FocusState private var isRenamingFocused: Bool
     
     var body: some View {
         VStack(spacing: 0) {
@@ -100,11 +103,29 @@ struct TerminalTabsView: View {
     private func tabItem(_ tab: TerminalTab) -> some View {
         let isSelected = tab.id == selectedTabId
         return HStack(spacing: 8) {
-            Button(action: { selectedTabId = tab.id }) {
-                TabLabelView(session: tab.session, isSelected: isSelected)
-                    .padding(.vertical, 0)
+            Group {
+                if renamingTabId == tab.id {
+                    TextField("Tab name", text: Binding(get: { renamingText }, set: { renamingText = $0 }))
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular, design: .default))
+                        .textFieldStyle(.plain)
+                        .foregroundColor(themeManager.currentTheme.foregroundColor)
+                        .frame(minWidth: 80)
+                        .focused($isRenamingFocused)
+                        .onAppear {
+                            renamingText = tab.title
+                            DispatchQueue.main.async { isRenamingFocused = true }
+                        }
+                        .onSubmit { commitRename(tabId: tab.id) }
+                        .onExitCommand { commitRename(tabId: tab.id) }
+                } else {
+                    Button(action: { selectedTabId = tab.id }) {
+                        TabLabelView(session: tab.session, isSelected: isSelected, titleOverride: tab.title)
+                            .padding(.vertical, 0)
+                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(tab: tab) })
+                }
             }
-            .buttonStyle(.plain)
             Button(action: { closeTab(tab.id) }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
@@ -152,7 +173,7 @@ struct TerminalTabsView: View {
     private func addTab() {
         let session = TerminalSession(startDirectory: "/")
         session.startSession()
-        let tab = TerminalTab(session: session)
+        let tab = TerminalTab(session: session, title: "New Terminal")
         tabs.append(tab)
         selectedTabId = tab.id
     }
@@ -161,6 +182,7 @@ struct TerminalTabsView: View {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let isClosingSelected = tabs[index].id == selectedTabId
         tabs.remove(at: index)
+        if renamingTabId == id { renamingTabId = nil }
         if tabs.isEmpty {
             addTab()
             return
@@ -180,6 +202,17 @@ struct TerminalTabsView: View {
     private func displayTitle(for tab: TerminalTab) -> String {
         TerminalTab.deriveTitle(from: tab.session)
     }
+
+    private func startRename(tab: TerminalTab) {
+        renamingTabId = tab.id
+        renamingText = tab.title
+    }
+    
+    private func commitRename(tabId: UUID) {
+        guard let idx = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        tabs[idx].title = renamingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        renamingTabId = nil
+    }
 }
 
 @MainActor
@@ -187,6 +220,7 @@ private struct TabLabelView: View {
     @ObservedObject var session: TerminalSession
     @EnvironmentObject var themeManager: ThemeManager
     let isSelected: Bool
+    let titleOverride: String?
     
     var body: some View {
         Text(title)
@@ -200,7 +234,8 @@ private struct TabLabelView: View {
     }
     
     private var title: String {
-        TerminalTab.titleFromPath(session.currentDirectory)
+        if let t = titleOverride, !t.isEmpty { return t }
+        return TerminalTab.titleFromPath(session.currentDirectory)
     }
 }
 

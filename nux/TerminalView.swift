@@ -22,24 +22,26 @@ struct TerminalView: View {
                     .background(themeManager.currentTheme.backgroundColor)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(terminal.outputs.indices, id: \.self) { index in
-                                let output = terminal.outputs[index]
-                                TerminalOutputRow(output: output)
-                                    .environmentObject(themeManager)
-                                    .id(index)
+                    GeometryReader { geo in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 8) {
+                                ForEach(terminal.outputs.indices, id: \.self) { index in
+                                    let output = terminal.outputs[index]
+                                    TerminalOutputRow(output: output)
+                                        .environmentObject(themeManager)
+                                        .id(index)
+                                }
+                                
+                                // Anchor at bottom for scrolling
+                                Spacer().frame(height: 20).id("bottom-spacer")
                             }
-                            
-                            // Add some bottom padding so last output isn't covered by control bar
-                            Spacer()
-                                .frame(height: 20)
-                                .id("bottom-spacer")
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            // Key: ensure content takes at least full height and sticks to bottom
+                            .frame(minHeight: geo.size.height, maxHeight: .infinity, alignment: .bottom)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .background(themeManager.currentTheme.backgroundColor)
                     }
-                    .background(themeManager.currentTheme.backgroundColor)
                     .onChange(of: terminal.outputs.count) {
                         withAnimation(.easeOut(duration: 0.3)) {
                             proxy.scrollTo("bottom-spacer", anchor: .bottom)
@@ -118,7 +120,7 @@ struct TerminalOutputRow: View {
                 // Divider above each command - full width
                 Divider()
                     .background(themeManager.currentTheme.foregroundColor.opacity(0.1))
-                    .padding(.bottom, 2)
+                    .padding(.vertical, 8)
                 // Show directory and execution time above command
                 if let directory = output.directory, let executionTime = output.executionTime {
                     HStack {
@@ -155,7 +157,7 @@ struct TerminalOutputRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, output.type == .command ? 0 : 2)
     }
     
     private func formatDirectory(_ directory: String) -> String {
