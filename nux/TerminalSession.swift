@@ -36,6 +36,8 @@ class TerminalSession: ObservableObject {
     private var inputPipe = Pipe()
     private var outputPipe = Pipe()
     private var errorPipe = Pipe()
+    private var cachedEnvironment: [String: String]?
+    private var environmentLoaded = false
     
     init(startDirectory: String = "/") {
         self.currentDirectory = startDirectory
@@ -45,6 +47,62 @@ class TerminalSession: ObservableObject {
     func startSession() {
         // Start with a ready prompt; UI handles empty state
         setupPrompt()
+        loadShellEnvironment()
+    }
+    
+    private func loadShellEnvironment() {
+        guard !environmentLoaded else { return }
+        
+        let process = Process()
+        let outputPipe = Pipe()
+        
+        process.standardOutput = outputPipe
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        
+        // Load shell environment and export it
+        let shellCommand = """
+        source ~/.zshrc 2>/dev/null || true
+        source ~/.zprofile 2>/dev/null || true
+        env
+        """
+        process.arguments = ["-c", shellCommand]
+        
+        do {
+            try process.run()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            
+            if let output = String(data: data, encoding: .utf8) {
+                var env: [String: String] = [:]
+                
+                // Parse environment variables
+                let lines = output.components(separatedBy: .newlines)
+                for line in lines {
+                    if let range = line.range(of: "=") {
+                        let key = String(line[..<range.lowerBound])
+                        let value = String(line[range.upperBound...])
+                        env[key] = value
+                    }
+                }
+                
+                // Ensure PATH includes common directories
+                let commonPaths = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
+                if let existingPath = env["PATH"] {
+                    env["PATH"] = "\(existingPath):\(commonPaths)"
+                } else {
+                    env["PATH"] = commonPaths
+                }
+                
+                cachedEnvironment = env
+                environmentLoaded = true
+            }
+        } catch {
+            // Fallback to basic environment
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
+            cachedEnvironment = env
+            environmentLoaded = true
+        }
     }
     
     private func addWelcomeMessage() {
@@ -63,21 +121,18 @@ class TerminalSession: ObservableObject {
         let startTime = Date()
         let commandDirectory = currentDirectory
         
-        // Add divider above command
-        outputs.append(TerminalOutput(text: "─", type: .output))
-        
         // Add command to output
         outputs.append(TerminalOutput(text: command, type: .command, prompt: prompt))
+        let commandIndex = outputs.count - 1
         
         // Handle built-in commands
         if handleBuiltInCommand(command) {
-            let executionTime = Date().timeIntervalSince(startTime)
-            addCommandMetadata(executionTime: executionTime, directory: commandDirectory)
+            updateCommandMetadata(at: commandIndex, directory: commandDirectory, executionTime: Date().timeIntervalSince(startTime))
             return
         }
         
         // Execute shell command
-        executeShellCommand(command, startTime: startTime, directory: commandDirectory)
+        executeShellCommand(command, directory: commandDirectory, startTime: startTime, commandIndex: commandIndex)
     }
     
     private func handleBuiltInCommand(_ command: String) -> Bool {
@@ -150,7 +205,7 @@ class TerminalSession: ObservableObject {
         }
     }
     
-    private func executeShellCommand(_ command: String, startTime: Date, directory: String) {
+    private func executeShellCommand(_ command: String, directory: String, startTime: Date, commandIndex: Int) {
         let process = Process()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -159,15 +214,17 @@ class TerminalSession: ObservableObject {
         process.standardError = errorPipe
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         
-        // Set up environment variables to match user's shell
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
-        process.environment = env
+        // Use cached environment or fallback to basic environment
+        if let cachedEnv = cachedEnvironment {
+            process.environment = cachedEnv
+        } else {
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
+            process.environment = env
+        }
         
-        // Create a command that loads user's shell configuration and executes the command
+        // Simple command execution without loading shell config every time
         let shellCommand = """
-        source ~/.zshrc 2>/dev/null || true
-        source ~/.zprofile 2>/dev/null || true
         cd '\(currentDirectory)' && \(command) && pwd
         """
         process.arguments = ["-c", shellCommand]
@@ -198,11 +255,7 @@ class TerminalSession: ObservableObject {
                             outputs.append(TerminalOutput(text: commandOutput, type: .output))
                         }
                     } else {
-                        // Single line output (just pwd result)
-                        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmedOutput.isEmpty {
-                            outputs.append(TerminalOutput(text: trimmedOutput, type: .output))
-                        }
+                        // Single line output is just the trailing pwd result; do not append
                     }
                 }
             }
@@ -216,31 +269,25 @@ class TerminalSession: ObservableObject {
                 }
             }
             
-            // Add command metadata (execution time and directory)
-            let executionTime = Date().timeIntervalSince(startTime)
-            addCommandMetadata(executionTime: executionTime, directory: directory)
-            
         } catch {
             outputs.append(TerminalOutput(text: "Error executing command: \(error.localizedDescription)", type: .error))
-            let executionTime = Date().timeIntervalSince(startTime)
-            addCommandMetadata(executionTime: executionTime, directory: directory)
         }
+        
+        // Update command metadata with execution time using original command index
+        updateCommandMetadata(at: commandIndex, directory: directory, executionTime: Date().timeIntervalSince(startTime))
     }
     
-    private func addCommandMetadata(executionTime: TimeInterval, directory: String) {
-        // Find the last command output and update it with metadata
-        if let lastIndex = outputs.lastIndex(where: { $0.type == .command }) {
-            let originalOutput = outputs[lastIndex]
-            let updatedOutput = TerminalOutput(
-                text: originalOutput.text,
-                type: originalOutput.type,
-                prompt: originalOutput.prompt,
-                executionTime: executionTime,
-                directory: directory
-            )
-            outputs[lastIndex] = updatedOutput
-        }
+    private func updateCommandMetadata(at index: Int, directory: String, executionTime: TimeInterval) {
+        guard index >= 0 && index < outputs.count else { return }
+        
+        let originalOutput = outputs[index]
+        let updatedOutput = TerminalOutput(
+            text: originalOutput.text,
+            type: originalOutput.type,
+            prompt: originalOutput.prompt,
+            executionTime: executionTime,
+            directory: directory
+        )
+        outputs[index] = updatedOutput
     }
-    
-
 }

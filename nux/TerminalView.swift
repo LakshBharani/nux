@@ -114,32 +114,40 @@ struct TerminalOutputRow: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Show metadata above command (execution time and directory)
-            if output.type == .command && (output.executionTime != nil || output.directory != nil) {
-                HStack(spacing: 8) {
-                    if let executionTime = output.executionTime {
-                        Text("(\(String(format: "%.3f", executionTime))s)")
-                            .font(.system(size: 11))
+            if output.type == .command {
+                // Divider above each command - full width
+                Divider()
+                    .background(themeManager.currentTheme.foregroundColor.opacity(0.1))
+                    .padding(.bottom, 2)
+                // Show directory and execution time above command
+                if let directory = output.directory, let executionTime = output.executionTime {
+                    HStack {
+                        Text(formatDirectory(directory))
+                            .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
-                    }
-                    
-                    if let directory = output.directory {
-                        Text(directory)
-                            .font(.system(size: 11))
+                        
+                        Text("(\(String(format: "%.3fs", executionTime)))")
+                            .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
+                        
+                        Spacer()
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            // Command or output content
-            HStack(alignment: .top, spacing: 12) {
-                if output.type == .command {
+                
+                // Command line
+                HStack(alignment: .top, spacing: 12) {
                     Text(output.prompt)
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(themeManager.currentTheme.accentColor)
+                    
+                    Text(output.text)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(colorForOutputType(output.type))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                
+            } else {
+                // Regular output (not commands)
                 Text(output.text)
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(colorForOutputType(output.type))
@@ -150,15 +158,19 @@ struct TerminalOutputRow: View {
         .padding(.vertical, 2)
     }
     
+    private func formatDirectory(_ directory: String) -> String {
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+        if directory.hasPrefix(homeDirectory) {
+            return directory.replacingOccurrences(of: homeDirectory, with: "~")
+        }
+        return directory
+    }
+    
     private func colorForOutputType(_ type: TerminalOutputType) -> Color {
         switch type {
         case .command:
             return themeManager.currentTheme.foregroundColor
         case .output:
-            // Check if this is a divider
-            if output.text == "─" {
-                return themeManager.currentTheme.foregroundColor.opacity(0.3)
-            }
             return themeManager.currentTheme.foregroundColor.opacity(0.9)
         case .error:
             return themeManager.currentTheme.errorColor
