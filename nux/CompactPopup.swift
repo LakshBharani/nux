@@ -206,7 +206,7 @@ struct CompactPopup: View {
 }
 
 #Preview {
-    @Previewable @StateObject var themeManager = ThemeManager()
+    @StateObject var themeManager = ThemeManager()
     
     let sampleItems = [
         PopupItem(id: "1", text: ".. (Parent Directory)", icon: "arrow.up.left", type: .parent, action: {}),

@@ -7,6 +7,7 @@ enum TerminalOutputType {
     case output
     case error
     case success
+    case aiResponse  // New type for Agent Assist responses
 }
 
 struct TerminalOutput {
@@ -49,6 +50,12 @@ class TerminalSession: ObservableObject {
     init(startDirectory: String = "/") {
         self.currentDirectory = startDirectory
         setupPrompt()
+    }
+
+    // Provide a snapshot of the shell environment for AI context building
+    func environmentSnapshot() -> [String: String] {
+        if let env = cachedEnvironment { return env }
+        return ProcessInfo.processInfo.environment
     }
     
     func startSession() {
@@ -125,12 +132,14 @@ class TerminalSession: ObservableObject {
     }
     
     func executeCommand(_ command: String) {
+        print("🖥️ [DEBUG] TerminalSession.executeCommand() called with: '\(command)'")
         let startTime = Date()
         let commandDirectory = currentDirectory
         
         // Add command to output
         outputs.append(TerminalOutput(text: command, type: .command, prompt: prompt))
         let commandIndex = outputs.count - 1
+        print("🖥️ [DEBUG] Added command to outputs, index: \(commandIndex)")
         
         // Handle built-in commands
         if handleBuiltInCommand(command) {
@@ -140,6 +149,53 @@ class TerminalSession: ObservableObject {
         
         // Execute shell command
         executeShellCommand(command, directory: commandDirectory, startTime: startTime, commandIndex: commandIndex)
+    }
+    
+    // Execute command silently for AI - doesn't add to visible outputs but returns result
+    func executeCommandSilently(_ command: String) async -> (output: String, error: String?) {
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                
+                // Use cached environment or fallback to basic environment
+                if let cachedEnv = self.cachedEnvironment {
+                    process.environment = cachedEnv
+                } else {
+                    var env = ProcessInfo.processInfo.environment
+                    env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
+                    process.environment = env
+                }
+                
+                // Execute command in current directory
+                let shellCommand = """
+                cd '\(self.currentDirectory)' && \(command)
+                """
+                process.arguments = ["-c", shellCommand]
+                
+                do {
+                    try process.run()
+                    
+                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    
+                    process.waitUntilExit()
+                    
+                    let output = String(data: outputData, encoding: .utf8) ?? ""
+                    let error = String(data: errorData, encoding: .utf8)
+                    let errorText = (error?.isEmpty == false) ? error : nil
+                    
+                    continuation.resume(returning: (output.trimmingCharacters(in: .whitespacesAndNewlines), errorText?.trimmingCharacters(in: .whitespacesAndNewlines)))
+                } catch {
+                    continuation.resume(returning: ("", "Failed to execute command: \(error.localizedDescription)"))
+                }
+            }
+        }
     }
     
     private func handleBuiltInCommand(_ command: String) -> Bool {
@@ -202,47 +258,182 @@ class TerminalSession: ObservableObject {
             return
         }
         
-        let targetPath = components[1].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        var fullPath: String
+        let targetPath = components[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullPath: String
         
         if targetPath.hasPrefix("/") {
+            // Absolute path
             fullPath = targetPath
         } else if targetPath == ".." {
+            // Parent directory
             fullPath = URL(fileURLWithPath: currentDirectory).deletingLastPathComponent().path
         } else if targetPath == "~" {
+            // Home directory
             fullPath = FileManager.default.homeDirectoryForCurrentUser.path
+        } else if targetPath.hasPrefix("~") {
+            // Home-relative path (e.g., ~/Documents)
+            fullPath = NSString(string: targetPath).expandingTildeInPath
         } else {
-            // For relative paths, check case-sensitive directory existence
-            do {
-                let contents = try FileManager.default.contentsOfDirectory(atPath: currentDirectory)
-                let matchingItem = contents.first { $0.lowercased() == targetPath.lowercased() }
-                
-                if let match = matchingItem {
-                    if match == targetPath {
-                        // Exact case match found
-                        fullPath = URL(fileURLWithPath: currentDirectory).appendingPathComponent(targetPath).path
-                    } else {
-                        // Case-insensitive match but different case
-                        outputs.append(TerminalOutput(text: "cd: no such file or directory: \(components[1])", type: .error))
-                        return
-                    }
-                } else {
-                    // No match at all
-                    outputs.append(TerminalOutput(text: "cd: no such file or directory: \(components[1])", type: .error))
-                    return
-                }
-            } catch {
-                outputs.append(TerminalOutput(text: "cd: no such file or directory: \(components[1])", type: .error))
-                return
-            }
+            // Relative path - build the full path and let the system validate it
+            fullPath = URL(fileURLWithPath: currentDirectory).appendingPathComponent(targetPath).path
         }
         
         changeToDirectory(fullPath)
     }
     
     private func changeToDirectory(_ path: String) {
-        currentDirectory = path
-        setupPrompt()
+        // Validate the directory exists before changing
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue {
+            currentDirectory = path
+            setupPrompt()
+        } else {
+            outputs.append(TerminalOutput(text: "cd: no such file or directory: \(path)", type: .error))
+        }
+    }
+    
+    // Update directory silently for AI commands without adding to outputs
+    func updateDirectorySilently(_ path: String) {
+        let expandedPath: String
+        if path.hasPrefix("~") {
+            expandedPath = NSString(string: path).expandingTildeInPath
+        } else if path.hasPrefix("/") {
+            expandedPath = path
+        } else {
+            expandedPath = URL(fileURLWithPath: currentDirectory).appendingPathComponent(path).path
+        }
+        
+        // Validate the directory exists before changing
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory) && isDirectory.boolValue {
+            currentDirectory = expandedPath
+            setupPrompt()
+            print("🖥️ [DEBUG] AI updated terminal directory to: \(currentDirectory)")
+        } else {
+            print("🖥️ [DEBUG] AI attempted to change to non-existent directory: \(expandedPath)")
+        }
+    }
+    
+    // Add AI response as terminal output entry
+    func addAIResponse(_ response: AIConversationEntry) {
+        let aiOutput = TerminalOutput(
+            text: response.id.uuidString, // Store the conversation ID to reference the full response
+            type: .aiResponse,
+            prompt: "",
+            executionTime: nil,
+            directory: currentDirectory
+        )
+        outputs.append(aiOutput)
+        print("🖥️ [DEBUG] Added AI response to terminal outputs at index \(outputs.count - 1)")
+    }
+    
+    // Execute command for AI through main terminal session but capture output without visible display
+    func executeCommandForAI(_ command: String) async -> (output: String, error: String?) {
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                print("🖥️ [DEBUG] AI executing command through main terminal: '\(command)'")
+                let startTime = Date()
+                let commandDirectory = self.currentDirectory
+                let originalOutputCount = self.outputs.count
+                
+                // Handle built-in commands first
+                if self.handleBuiltInCommand(command) {
+                    // For built-in commands, capture any new outputs
+                    let newOutputs = Array(self.outputs.dropFirst(originalOutputCount))
+                    let output = newOutputs.compactMap { output in
+                        switch output.type {
+                        case .output, .success:
+                            return output.text
+                        default:
+                            return nil
+                        }
+                    }.joined(separator: "\n")
+                    
+                    let error = newOutputs.first { $0.type == .error }?.text
+                    
+                    // Remove the AI command outputs from visible terminal to keep it clean
+                    if self.outputs.count > originalOutputCount {
+                        self.outputs.removeSubrange(originalOutputCount...)
+                    }
+                    
+                    continuation.resume(returning: (output, error))
+                    return
+                }
+                
+                // For shell commands, execute through the main shell process
+                self.executeShellCommandForAI(command, directory: commandDirectory, startTime: startTime, originalOutputCount: originalOutputCount, continuation: continuation)
+            }
+        }
+    }
+    
+    private func executeShellCommandForAI(_ command: String, directory: String, startTime: Date, originalOutputCount: Int, continuation: CheckedContinuation<(output: String, error: String?), Never>) {
+        // Use the same shell process approach as the main terminal for consistency
+        // This ensures environment variables, aliases, and other state are preserved
+        executeShellCommandWithCapture(command, directory: directory, startTime: startTime, commandIndex: -1) { [weak self] capturedOutput, capturedError in
+            DispatchQueue.main.async {
+                continuation.resume(returning: (capturedOutput ?? "", capturedError))
+            }
+        }
+    }
+    
+    private func executeShellCommandWithCapture(_ command: String, directory: String, startTime: Date, commandIndex: Int, completion: @escaping (String?, String?) -> Void) {
+        let process = Process()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        
+        // Use cached environment or fallback to basic environment
+        if let cachedEnv = cachedEnvironment {
+            process.environment = cachedEnv
+        } else {
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/opt/homebrew/bin:/opt/homebrew/sbin"
+            process.environment = env
+        }
+        
+        // Execute in current directory and capture new directory state
+        let shellCommand = """
+        cd '\(currentDirectory)' && \(command) && pwd
+        """
+        process.arguments = ["-c", shellCommand]
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try process.run()
+                
+                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                
+                process.waitUntilExit()
+                
+                let output = String(data: outputData, encoding: .utf8) ?? ""
+                let errorOutput = String(data: errorData, encoding: .utf8)
+                
+                // Extract directory info from output
+                let outputLines = output.components(separatedBy: .newlines)
+                let newDirectory = outputLines.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let commandOutput = outputLines.dropLast().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                DispatchQueue.main.async {
+                    // Update directory if it changed and this is for AI (commandIndex == -1)
+                    if commandIndex == -1 && !newDirectory.isEmpty && newDirectory != self.currentDirectory {
+                        self.currentDirectory = newDirectory
+                        self.setupPrompt()
+                        print("🖥️ [DEBUG] AI command updated directory to: \(self.currentDirectory)")
+                    }
+                    
+                    let finalError = (errorOutput?.isEmpty == false) ? errorOutput : nil
+                    completion(commandOutput, finalError)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion("", "Failed to execute command: \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     private func executeShellCommand(_ command: String, directory: String, startTime: Date, commandIndex: Int) {
@@ -304,6 +495,7 @@ class TerminalSession: ObservableObject {
                 if let error = String(data: errorData, encoding: .utf8) {
                     let trimmedError = error.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmedError.isEmpty {
+                        print("🖥️ [DEBUG] Adding error output: '\(trimmedError)'")
                         outputs.append(TerminalOutput(text: trimmedError, type: .error))
                     }
                 }

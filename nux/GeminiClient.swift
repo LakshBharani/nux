@@ -59,6 +59,16 @@ final class GeminiClient {
         let recommendations: [String]
     }
     
+    struct AgentAction: Codable {
+        let explanation: String
+        let suggestedCommand: String
+        let autoExecute: Bool
+        let alternatives: [String]
+        let notes: [String]
+        let risk: String
+        let requiresConfirmation: Bool
+    }
+    
     func summarize(outputs: [TerminalOutput]) async throws -> String {
         guard let apiKey = getApiKey(), apiKey.isEmpty == false else {
             throw GeminiError.missingApiKey
@@ -102,6 +112,7 @@ final class GeminiClient {
             case .output: prefix = ""
             case .error: prefix = "[error] "
             case .success: prefix = "[success] "
+            case .aiResponse: prefix = "[ai] "
             }
             return prefix + out.text
         }
@@ -149,6 +160,21 @@ final class GeminiClient {
         do {
             let decoded = try JSONDecoder().decode(SessionSummary.self, from: data)
             return normalize(summary: decoded)
+        } catch {
+            throw GeminiError.invalidResponse
+        }
+    }
+
+    func generateAction(prompt: String) async throws -> AgentAction {
+        let raw = try await generateResponse(prompt: prompt)
+        // Extract first JSON object
+        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}") else {
+            throw GeminiError.invalidResponse
+        }
+        let json = String(raw[start...end])
+        guard let data = json.data(using: .utf8) else { throw GeminiError.invalidResponse }
+        do {
+            return try JSONDecoder().decode(AgentAction.self, from: data)
         } catch {
             throw GeminiError.invalidResponse
         }

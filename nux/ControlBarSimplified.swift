@@ -25,6 +25,7 @@ struct ControlBarSimplified: View {
     @State private var showDirectoryBrowser = false
     @State private var directoryItems: [PopupItem] = []
     @State private var selectedDirectoryIndex: Int = 0
+    @State private var showAgentErrorHint = false
     
     // MARK: - Focus Management
     @State private var currentFocus: FocusTarget = .input
@@ -48,17 +49,16 @@ struct ControlBarSimplified: View {
             .onChange(of: autocomplete.showDropdown) {
                 handleAutocompleteVisibilityChange()
             }
+            .onChange(of: terminal.outputs.count) {
+                handleOutputsChanged()
+            }
             .overlay(autocompletePopupOverlay)
             .overlay(directoryBrowserOverlay)
     }
     
     private var mainContent: some View {
         VStack(spacing: 0) {
-            // Show AI conversation history if in AI mode and has conversations
-            if aiContext.isAIMode && !aiContext.conversationHistory.isEmpty {
-                AIConversationBarView(aiContext: aiContext)
-                    .environmentObject(themeManager)
-            }
+            // AI responses are now shown inline in the terminal, no separate conversation bar needed
             
             VStack(spacing: 8) {
                 // Top line: Directory info with current directory and AI indicators
@@ -92,35 +92,55 @@ struct ControlBarSimplified: View {
                         // Always show Agent and Attach Context labels with shortcuts
                         HStack(spacing: 8) {
                             // Agent Mode indicator (always visible)
-                            HStack(spacing: 4) {
-                                Image(systemName: "brain.head.profile")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.5))
-                                
-                                Text("Agent")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.5))
-                                
-                                HStack(spacing: 2) {
-                                    KeyCap(
-                                        label: "⌘",
-                                        textColor: aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.6),
-                                        bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
-                                    )
-                                    KeyCap(
-                                        label: "I",
-                                        textColor: aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.6),
-                                        bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
-                                    )
-                                }
-                                
-                                if aiContext.isProcessing {
-                                    ProgressView()
-                                        .scaleEffect(0.6)
-                                        .frame(width: 8, height: 8)
+                            Button(action: {
+                                aiContext.toggleAIMode()
+                                setFocus(to: .input)
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.5))
+                                    
+                                    Text("Agent")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.5))
+                                    
+                                    HStack(spacing: 2) {
+                                        KeyCap(
+                                            label: "⌘",
+                                            textColor: aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.6),
+                                            bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
+                                        )
+                                        KeyCap(
+                                            label: "I",
+                                            textColor: aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.6),
+                                            bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
+                                        )
+                                    }
+                                    
+                                    if aiContext.isProcessing {
+                                        // Custom AI loading animation
+                                        HStack(spacing: 2) {
+                                            ForEach(0..<3) { index in
+                                                Circle()
+                                                    .fill(themeManager.agentColor())
+                                                    .frame(width: 4, height: 4)
+                                                    .scaleEffect(aiContext.isProcessing ? 1.0 : 0.5)
+                                                    .animation(
+                                                        Animation.easeInOut(duration: 0.6)
+                                                            .repeatForever()
+                                                            .delay(Double(index) * 0.2),
+                                                        value: aiContext.isProcessing
+                                                    )
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            .padding(.horizontal, 6)
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            .padding(.leading, 6)
+                            .padding(.trailing, 3)
                             .padding(.vertical, 3)
                             .background(aiContext.isAIMode ? themeManager.agentColor().opacity(0.18) : themeManager.currentTheme.foregroundColor.opacity(0.05))
                             .cornerRadius(3)
@@ -154,7 +174,8 @@ struct ControlBarSimplified: View {
                                         .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
                                 }
                             }
-                            .padding(.horizontal, 6)
+                            .padding(.leading, 6)
+                            .padding(.trailing, 3)
                             .padding(.vertical, 3)
                             .background(aiContext.hasContext ? themeManager.currentTheme.accentColor.opacity(0.1) : themeManager.currentTheme.foregroundColor.opacity(0.05))
                             .cornerRadius(3)
@@ -208,6 +229,11 @@ struct ControlBarSimplified: View {
                         onGeometryChange: handleGeometryChange
                     )
                     .environmentObject(themeManager)
+                    .onChange(of: aiContext.lastSuggestedCommand) {
+                        if !aiContext.lastSuggestedCommand.isEmpty && aiContext.isAIMode {
+                            currentCommand = aiContext.lastSuggestedCommand
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -460,6 +486,22 @@ struct ControlBarSimplified: View {
             closeDirectoryBrowser()
         }
     }
+
+    // MARK: - Error Detection / Agent Hint
+    private func handleOutputsChanged() {
+        guard let last = terminal.outputs.last else { return }
+        if last.type == .error {
+            showAgentErrorHint = true
+            // Auto-hide after a few seconds unless in Agent mode
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                if !aiContext.isAIMode {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        showAgentErrorHint = false
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Uniform keycap view for shortcut badges
@@ -480,12 +522,12 @@ private struct KeyCap: View {
 }
 
 #Preview {
-    @Previewable @StateObject var themeManager = ThemeManager()
-    @Previewable @StateObject var terminal = TerminalSession()
-    @Previewable @StateObject var autocomplete = AutocompleteEngine()
-    @Previewable @StateObject var aiContext = AIContextManager()
-    @Previewable @State var command = ""
-    @Previewable @FocusState var focused: Bool
+    @StateObject var themeManager = ThemeManager()
+    @StateObject var terminal = TerminalSession()
+    @StateObject var autocomplete = AutocompleteEngine()
+    @StateObject var aiContext = AIContextManager()
+    @State var command = ""
+    @FocusState var focused: Bool
     
     return ControlBarSimplified(
         currentCommand: $command,

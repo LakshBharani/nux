@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct TerminalView: View {
     @ObservedObject var terminal: TerminalSession
@@ -58,7 +59,8 @@ struct TerminalView: View {
                                             outputIndex: index,
                                             ownerCommandIndex: ownerCommandIndex,
                                             allOutputs: terminal.outputs,
-                                            hoveredCommandIndex: $hoveredCommandIndex
+                                            hoveredCommandIndex: $hoveredCommandIndex,
+                                            currentCommand: $currentCommand
                                         )
                                         .environmentObject(themeManager)
                                         .environmentObject(aiContext)
@@ -76,6 +78,20 @@ struct TerminalView: View {
                             .background(themeManager.currentTheme.backgroundColor)
                         }
                         .onChange(of: terminal.outputs.count) {
+                            print("📊 [DEBUG] Terminal outputs changed, count: \(terminal.outputs.count)")
+                            if let lastOutput = terminal.outputs.last {
+                                print("📊 [DEBUG] Last output type: \(lastOutput.type), text: '\(lastOutput.text)'")
+                                if lastOutput.type == .error {
+                                    print("🚨 [DEBUG] Error detected: '\(lastOutput.text)'")
+                                    print("📱 [DEBUG] Error action strip should be visible now")
+                                }
+                            }
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                proxy.scrollTo("bottom-spacer", anchor: .bottom)
+                            }
+                        }
+                        .onChange(of: aiContext.conversationHistory.count) {
+                            // Always scroll to bottom when AI responses are added
                             withAnimation(.easeOut(duration: 0.3)) {
                                 proxy.scrollTo("bottom-spacer", anchor: .bottom)
                             }
@@ -108,6 +124,36 @@ struct TerminalView: View {
         .onAppear {
             isInputFocused = true
             terminal.startSession()
+            
+            // Set terminal session reference in AI context manager
+            aiContext.terminalSession = terminal
+            
+            // Listen for focus input field notifications
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("FocusInputField"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                print("🔧 [DEBUG] FocusInputField notification received, setting isInputFocused = true")
+                isInputFocused = true
+            }
+            
+
+            
+            // Listen for approve risky command notifications
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("ApproveRiskyCommand"),
+                object: nil,
+                queue: .main
+            ) { notification in
+                if let command = notification.object as? String {
+                    print("🚀 [DEBUG] ApproveRiskyCommand notification received: '\(command)'")
+                    // Approve and execute the risky command
+                    Task {
+                        await aiContext.approveRiskyCommand(command)
+                    }
+                }
+            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -137,32 +183,65 @@ struct TerminalView: View {
                 }
                 .keyboardShortcut(.upArrow, modifiers: .command)
                 .hidden()
+
+                // Command+Enter handler — Fix with Agent
+                Button("Command+Enter Handler") {
+                    print("⌨️ [DEBUG] ⌘↩ shortcut triggered")
+                    
+                    // Since commands are now executed autonomously, this shortcut is for "Fix with Agent"
+                    print("⌨️ [DEBUG] Doing Fix with Agent")
+                    if let lastCommandIndex = findLastCommandIndex(in: terminal.outputs) {
+                        let lastCommand = terminal.outputs[lastCommandIndex]
+                        let following = getOutputsAfterCommand(at: lastCommandIndex, in: terminal.outputs)
+                        let attached = AIAttachedCommand(from: lastCommand, commandOutput: following)
+                        
+                        // Clear any existing attached commands and add this one
+                        aiContext.attachedCommands.removeAll()
+                        aiContext.attachedCommands.append(attached)
+                        
+                        aiContext.isAIMode = true
+                        currentCommand = "Fix this"
+                        
+                        print("⌨️ [DEBUG] ⌘↩ shortcut completed - AI mode: \(aiContext.isAIMode), command: '\(currentCommand)'")
+                    }
+                    isInputFocused = true
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .hidden()
             }
         )
     }
     
-
-    
-
-    
     private func executeCommand() {
-        guard !currentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        print("🚀 [DEBUG] executeCommand() called with: '\(currentCommand)'")
+        print("🚀 [DEBUG] AI mode: \(aiContext.isAIMode)")
+        
+        guard !currentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { 
+            print("🚀 [DEBUG] Empty command, returning early")
+            return 
+        }
         
         if aiContext.isAIMode {
+            print("🚀 [DEBUG] Executing AI prompt...")
+            let promptToSend = currentCommand
+            currentCommand = ""
+            print("🚀 [DEBUG] Cleared currentCommand, sending prompt: '\(promptToSend)'")
             // Execute AI prompt
             Task {
-                await aiContext.executeAIPrompt(currentCommand)
+                await aiContext.executeAIPrompt(promptToSend)
             }
-            currentCommand = ""
         } else {
+            print("🚀 [DEBUG] Executing regular command...")
             // Execute regular command
             commandHistory.addCommand(currentCommand)
             autocomplete.addToHistory(currentCommand)
             terminal.executeCommand(currentCommand)
             currentCommand = ""
             autocomplete.clearSuggestions()
+            print("🚀 [DEBUG] Regular command executed")
         }
         
+        print("🚀 [DEBUG] Setting input focus")
         isInputFocused = true
     }
     
@@ -179,128 +258,15 @@ struct TerminalView: View {
             }
         }
     }
-}
-
-struct TerminalOutputRow: View {
-    let output: TerminalOutput
-    let outputIndex: Int
-    let ownerCommandIndex: Int
-    let allOutputs: [TerminalOutput]
-    @Binding var hoveredCommandIndex: Int?
-    @EnvironmentObject var themeManager: ThemeManager
-    @EnvironmentObject var aiContext: AIContextManager
-    @State private var isHovered = false
-    private let buttonWidth: CGFloat = 170
     
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if output.type == .command {
-                // Divider above each command - full width
-                Divider()
-                    .background(themeManager.currentTheme.foregroundColor.opacity(0.1))
-                    .padding(.vertical, 8)
-                // Show directory and execution time above command
-                if let directory = output.directory, let executionTime = output.executionTime {
-                    HStack {
-                        // Show full expanded path (do not collapse ~)
-                        Text(directory)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
-                        
-                        Text("(\(String(format: "%.3fs", executionTime)))")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
-                        
-                        Spacer()
-                        
-                        // Reserved area for attach/remove button to prevent layout shift
-                        HStack(spacing: 0) {
-                            let attached = isOwnerAttached()
-                            Button(action: {
-                                if attached { removeCommandFromContext() } else { attachCommandAsContext() }
-                            }) {
-                                HStack(spacing: 6) {
-                                    if attached {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.system(size: 10, weight: .medium))
-                                        Text("Remove context")
-                                            .font(.system(size: 10, weight: .medium))
-                                    } else {
-                                        Image(systemName: "paperclip")
-                                            .font(.system(size: 10, weight: .medium))
-                                        Text("Attach as context")
-                                            .font(.system(size: 10, weight: .medium))
-                                    }
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(attached ? themeManager.currentTheme.foregroundColor.opacity(0.08) : themeManager.currentTheme.accentColor.opacity(0.1))
-                                .foregroundColor(attached ? themeManager.currentTheme.foregroundColor.opacity(0.75) : themeManager.currentTheme.accentColor)
-                                .cornerRadius(4)
-                            }
-                            .buttonStyle(.plain)
-                            .opacity(hoveredCommandIndex == ownerCommandIndex || attached ? 1 : 0)
-                            .animation(.easeOut(duration: 0.12), value: hoveredCommandIndex == ownerCommandIndex || attached)
-                        }
-                        .frame(width: buttonWidth, alignment: .trailing)
-                    }
-                }
-                
-                // Command line
-                HStack(alignment: .top, spacing: 12) {
-                    Text(output.prompt)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.accentColor)
-                    
-                    Text(output.text)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(colorForOutputType(output.type))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                // Regular output (not commands)
-                Text(output.text)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(colorForOutputType(output.type))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+    // Helper functions for the ⌘↩ shortcut
+    private func findLastCommandIndex(in outputs: [TerminalOutput]) -> Int? {
+        for i in (0..<outputs.count).reversed() {
+            if outputs[i].type == .command {
+                return i
             }
         }
-        .padding(.vertical, output.type == .command ? 0 : 2)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            isHovered = hovering
-            if hovering {
-                hoveredCommandIndex = ownerCommandIndex
-            } else if hoveredCommandIndex == ownerCommandIndex {
-                hoveredCommandIndex = nil
-            }
-        }
-    }
-    
-    private func attachCommandAsContext() {
-        let followingOutputs = getOutputsAfterCommand(at: outputIndex, in: allOutputs)
-        let attachedCommand = AIAttachedCommand(from: output, commandOutput: followingOutputs)
-        
-        // Avoid duplicates
-        if !aiContext.attachedCommands.contains(where: { $0.command == attachedCommand.command && $0.timestamp == attachedCommand.timestamp }) {
-            aiContext.attachedCommands.append(attachedCommand)
-            aiContext.isAIMode = true
-        }
-    }
-    
-    private func removeCommandFromContext() {
-        // Identify by command text and timestamp
-        aiContext.attachedCommands.removeAll { item in
-            item.command == output.text && item.timestamp == output.timestamp
-        }
-    }
-    
-    private func isOwnerAttached() -> Bool {
-        return aiContext.attachedCommands.contains { item in
-            item.command == output.text && item.timestamp == output.timestamp
-        }
+        return nil
     }
     
     private func getOutputsAfterCommand(at commandIndex: Int, in outputs: [TerminalOutput]) -> [TerminalOutput] {
@@ -318,22 +284,6 @@ struct TerminalOutputRow: View {
         }
         
         return result
-    }
-    
-    // Keeping helper if we want to toggle formatting later
-    private func formatDirectory(_ directory: String) -> String { directory }
-    
-    private func colorForOutputType(_ type: TerminalOutputType) -> Color {
-        switch type {
-        case .command:
-            return themeManager.currentTheme.foregroundColor
-        case .output:
-            return themeManager.currentTheme.foregroundColor.opacity(0.9)
-        case .error:
-            return themeManager.currentTheme.errorColor
-        case .success:
-            return themeManager.currentTheme.successColor
-        }
     }
 }
 
