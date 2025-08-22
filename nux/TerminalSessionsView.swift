@@ -95,16 +95,17 @@ struct TerminalSessionsView: View {
         let hasCommands = session.outputs.contains { $0.type == .command }
         
         if !hasCommands {
-            // Show empty state immediately
-            showSummarySheet = true
+            // Prepare empty state and then present
             isSummarizing = false
             summary = nil
+            showSummarySheet = true
             return
         }
         
-        showSummarySheet = true
+        // Ensure loading state is set BEFORE presenting the sheet so spinner shows immediately
         isSummarizing = true
         summary = nil
+        showSummarySheet = true
         Task { @MainActor in
             do {
                 let s = try await GeminiClient.shared.summarizeStructured(outputs: session.outputs)
@@ -158,6 +159,7 @@ private extension TerminalSessionsView {
                             }
                             .buttonStyle(.borderless)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .tag(item.id)
                         .contextMenu {
                             Button("Summarize") { summarize(item.session) }
@@ -184,11 +186,12 @@ private extension TerminalSessionsView {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .buttonStyle(.plain)
             .background(themeManager.currentTheme.backgroundColor.opacity(0.5))
             .id("settings-\(themeManager.currentTheme.accentColor.description)")
         }
-        .frame(minWidth: 280, maxWidth: 280)
+        .frame(minWidth: 260, maxWidth: .infinity)
     }
 }
 

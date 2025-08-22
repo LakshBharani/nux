@@ -26,9 +26,8 @@ struct SettingsView: View {
                         }
                     }
                     .onChange(of: selectedTheme) {
-                        if let theme = themes.first(where: { $0.0 == selectedTheme })?.1 {
-                            themeManager.setTheme(theme)
-                        }
+                        // Apply and persist theme by name
+                        themeManager.setThemeByName(selectedTheme)
                     }
                 }
                 
@@ -77,24 +76,8 @@ struct SettingsView: View {
         }
         .frame(minWidth: 520, idealWidth: 640, maxWidth: 800, minHeight: 480, idealHeight: 560, maxHeight: 900)
         .onAppear {
-            // Set initial selection based on current theme
-            if themeManager.currentTheme.backgroundColor == TerminalTheme.nuxDark.backgroundColor {
-                selectedTheme = "nux Dark"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.cyberpunk.backgroundColor {
-                selectedTheme = "Cyberpunk"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.dracula.backgroundColor {
-                selectedTheme = "Dracula"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.nord.backgroundColor {
-                selectedTheme = "Nord"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.solarized.backgroundColor {
-                selectedTheme = "Solarized"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.tokyoNight.backgroundColor {
-                selectedTheme = "Tokyo Night"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.gruvbox.backgroundColor {
-                selectedTheme = "Gruvbox"
-            } else if themeManager.currentTheme.backgroundColor == TerminalTheme.classic.backgroundColor {
-                selectedTheme = "Classic"
-            }
+            // Load persisted selection
+            selectedTheme = themeManager.getSavedThemeName()
         }
     }
 }

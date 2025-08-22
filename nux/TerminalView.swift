@@ -124,7 +124,8 @@ struct TerminalOutputRow: View {
                 // Show directory and execution time above command
                 if let directory = output.directory, let executionTime = output.executionTime {
                     HStack {
-                        Text(formatDirectory(directory))
+                        // Show full expanded path (do not collapse ~)
+                        Text(directory)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
                         
@@ -160,13 +161,8 @@ struct TerminalOutputRow: View {
         .padding(.vertical, output.type == .command ? 0 : 2)
     }
     
-    private func formatDirectory(_ directory: String) -> String {
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
-        if directory.hasPrefix(homeDirectory) {
-            return directory.replacingOccurrences(of: homeDirectory, with: "~")
-        }
-        return directory
-    }
+    // Keeping helper if we want to toggle formatting later
+    private func formatDirectory(_ directory: String) -> String { directory }
     
     private func colorForOutputType(_ type: TerminalOutputType) -> Color {
         switch type {

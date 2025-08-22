@@ -119,8 +119,36 @@ struct TerminalTheme {
 
 class ThemeManager: ObservableObject {
     @Published var currentTheme: TerminalTheme = .nuxDark
+    private let themeDefaultsKey = "SelectedThemeName"
+    
+    init() {
+        // Load persisted theme if available
+        if let saved = UserDefaults.standard.string(forKey: themeDefaultsKey) {
+            setThemeByName(saved)
+        }
+    }
     
     func setTheme(_ theme: TerminalTheme) {
         currentTheme = theme
+    }
+    
+    // Convenience: select and persist by human-readable name
+    func setThemeByName(_ name: String) {
+        switch name {
+        case "nux Dark": currentTheme = .nuxDark
+        case "Classic": currentTheme = .classic
+        case "Cyberpunk": currentTheme = .cyberpunk
+        case "Dracula": currentTheme = .dracula
+        case "Nord": currentTheme = .nord
+        case "Solarized": currentTheme = .solarized
+        case "Tokyo Night": currentTheme = .tokyoNight
+        case "Gruvbox": currentTheme = .gruvbox
+        default: currentTheme = .nuxDark
+        }
+        UserDefaults.standard.set(name, forKey: themeDefaultsKey)
+    }
+    
+    func getSavedThemeName() -> String {
+        UserDefaults.standard.string(forKey: themeDefaultsKey) ?? "nux Dark"
     }
 }

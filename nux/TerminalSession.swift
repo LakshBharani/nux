@@ -239,23 +239,23 @@ class TerminalSession: ObservableObject {
             
             // Split the output to separate command output from the pwd result
             if !outputData.isEmpty {
-                if let output = String(data: outputData, encoding: .utf8) {
-                    let lines = output.components(separatedBy: .newlines)
-                    if lines.count > 1 {
-                        // Last line should be the pwd result
-                        let newDirectory = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? currentDirectory
-                        if !newDirectory.isEmpty && newDirectory != currentDirectory {
-                            currentDirectory = newDirectory
-                            setupPrompt()
+                if let raw = String(data: outputData, encoding: .utf8) {
+                    // Trim trailing newlines so the last non-empty line is truly the pwd
+                    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        let lines = trimmed.components(separatedBy: .newlines)
+                        if let last = lines.last {
+                            let newDirectory = last.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !newDirectory.isEmpty && newDirectory != currentDirectory {
+                                currentDirectory = newDirectory
+                                setupPrompt()
+                            }
                         }
-                        
                         // All lines except the last are the command output
                         let commandOutput = lines.dropLast().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
                         if !commandOutput.isEmpty {
                             outputs.append(TerminalOutput(text: commandOutput, type: .output))
                         }
-                    } else {
-                        // Single line output is just the trailing pwd result; do not append
                     }
                 }
             }

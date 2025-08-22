@@ -126,6 +126,11 @@ final class GeminiClient {
         Be specific and include actual commands, paths, and technical details when relevant.
         Do not include command lists in the summary - focus on insights and actionable information.
         Use plain text only - no markdown, no formatting, no special characters except basic punctuation.
+        Keep it concise:
+        - summary: max 2 short sentences, <= 220 characters
+        - each list (errors/nextSteps/keyInsights/potentialIssues/usefulCommands/recommendations): up to 6 items
+        - each item: short phrase, <= 80 characters
+        - avoid long paragraphs; prefer terse, scannable lines
         
         Session transcript:
         |||
@@ -142,10 +147,46 @@ final class GeminiClient {
         let json = String(raw[start...end])
         guard let data = json.data(using: .utf8) else { throw GeminiError.invalidResponse }
         do {
-            return try JSONDecoder().decode(SessionSummary.self, from: data)
+            let decoded = try JSONDecoder().decode(SessionSummary.self, from: data)
+            return normalize(summary: decoded)
         } catch {
             throw GeminiError.invalidResponse
         }
+    }
+
+    // MARK: - Post-processing to enforce brevity and plain text
+    private func normalize(summary s: SessionSummary) -> SessionSummary {
+        let clampSummary = clampText(s.summary, maxChars: 220)
+        let clampState = clampText(s.currentState, maxChars: 160)
+        return SessionSummary(
+            summary: clampSummary,
+            commands: clampList(s.commands, maxItems: 6, maxChars: 80),
+            errors: clampList(s.errors, maxItems: 6, maxChars: 80),
+            nextSteps: clampList(s.nextSteps, maxItems: 6, maxChars: 80),
+            keyInsights: clampList(s.keyInsights, maxItems: 6, maxChars: 80),
+            potentialIssues: clampList(s.potentialIssues, maxItems: 6, maxChars: 80),
+            usefulCommands: clampList(s.usefulCommands, maxItems: 6, maxChars: 80),
+            currentState: clampState,
+            recommendations: clampList(s.recommendations, maxItems: 6, maxChars: 80)
+        )
+    }
+    
+    private func clampList(_ arr: [String], maxItems: Int, maxChars: Int) -> [String] {
+        if arr.isEmpty { return [] }
+        return Array(arr.prefix(maxItems)).map { clampText($0, maxChars: maxChars) }
+            .filter { !$0.isEmpty }
+    }
+    
+    private func clampText(_ text: String, maxChars: Int) -> String {
+        var t = text.replacingOccurrences(of: "\r", with: "")
+        t = t.replacingOccurrences(of: "\n+", with: " ", options: .regularExpression)
+        t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.count > maxChars {
+            let endIndex = t.index(t.startIndex, offsetBy: maxChars)
+            return String(t[..<endIndex]).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        return t
     }
 }
 
