@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 enum TerminalOutputType {
     case command
@@ -31,6 +32,12 @@ class TerminalSession: ObservableObject {
     @Published var outputs: [TerminalOutput] = []
     @Published var currentDirectory: String = ""
     @Published var prompt: String = ""
+    @Published var showFileViewer = false
+    @Published var showVimEditor = false
+    @Published var showVimShell = false
+    @Published var isInVimMode = false
+    @Published var fileToView: String = ""
+    @Published var fileToEdit: String = ""
     
     private var process: Process?
     private var inputPipe = Pipe()
@@ -150,6 +157,15 @@ class TerminalSession: ObservableObject {
         case "cd":
             changeDirectory(components)
             return true
+        case "open", "view", "cat":
+            openFile(components)
+            return true
+        case "edit", "vim", "nano":
+            editFile(components)
+            return true
+        case "vimshell":
+            openVimShell()
+            return true
         default:
             return false
         }
@@ -161,6 +177,13 @@ class TerminalSession: ObservableObject {
           help     - Show this help message
           clear    - Clear the terminal
           cd       - Change directory
+          open     - Open file in viewer (open <filename>)
+          view     - View file content (view <filename>)
+          cat      - Display file content (cat <filename>)
+          edit     - Edit file with vim (edit <filename>)
+          vim      - Edit file with vim (vim <filename>)
+          nano     - Edit file with nano (nano <filename>)
+          vimshell - Enter full vim shell mode
           
         All other commands are executed in the shell.
         """
@@ -179,7 +202,7 @@ class TerminalSession: ObservableObject {
             return
         }
         
-        let targetPath = components[1]
+        let targetPath = components[1].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var fullPath: String
         
         if targetPath.hasPrefix("/") {
@@ -189,20 +212,37 @@ class TerminalSession: ObservableObject {
         } else if targetPath == "~" {
             fullPath = FileManager.default.homeDirectoryForCurrentUser.path
         } else {
-            fullPath = URL(fileURLWithPath: currentDirectory).appendingPathComponent(targetPath).path
+            // For relative paths, check case-sensitive directory existence
+            do {
+                let contents = try FileManager.default.contentsOfDirectory(atPath: currentDirectory)
+                let matchingItem = contents.first { $0.lowercased() == targetPath.lowercased() }
+                
+                if let match = matchingItem {
+                    if match == targetPath {
+                        // Exact case match found
+                        fullPath = URL(fileURLWithPath: currentDirectory).appendingPathComponent(targetPath).path
+                    } else {
+                        // Case-insensitive match but different case
+                        outputs.append(TerminalOutput(text: "cd: no such file or directory: \(components[1])", type: .error))
+                        return
+                    }
+                } else {
+                    // No match at all
+                    outputs.append(TerminalOutput(text: "cd: no such file or directory: \(components[1])", type: .error))
+                    return
+                }
+            } catch {
+                outputs.append(TerminalOutput(text: "cd: no such file or directory: \(components[1])", type: .error))
+                return
+            }
         }
         
         changeToDirectory(fullPath)
     }
     
     private func changeToDirectory(_ path: String) {
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue {
-            currentDirectory = path
-            setupPrompt()
-        } else {
-            outputs.append(TerminalOutput(text: "cd: no such file or directory: \(path)", type: .error))
-        }
+        currentDirectory = path
+        setupPrompt()
     }
     
     private func executeShellCommand(_ command: String, directory: String, startTime: Date, commandIndex: Int) {
@@ -289,5 +329,74 @@ class TerminalSession: ObservableObject {
             directory: directory
         )
         outputs[index] = updatedOutput
+    }
+    
+    // MARK: - File Operations
+    
+    private func openFile(_ components: [String]) {
+        guard components.count > 1 else {
+            outputs.append(TerminalOutput(text: "Usage: open <filename>", type: .error))
+            return
+        }
+        
+        // Join all components after the command to handle filenames with spaces
+        let fileName = Array(components.dropFirst()).joined(separator: " ")
+        let fullPath = resolvePath(fileName)
+        
+        if FileManager.default.fileExists(atPath: fullPath) {
+            // Check if it's a text file that we can handle internally
+            let fileType = FileViewer.FileType.determine(for: fullPath)
+            
+            if fileType == .text {
+                // Use internal viewer for text files
+                fileToView = fullPath
+                showFileViewer = true
+            } else {
+                // Use system default app for non-text files
+                let url = URL(fileURLWithPath: fullPath)
+                if NSWorkspace.shared.open(url) {
+                    outputs.append(TerminalOutput(text: "Opened \(fileName) with system default app", type: .success))
+                } else {
+                    outputs.append(TerminalOutput(text: "Error opening \(fileName) with system app", type: .error))
+                }
+            }
+        } else {
+            outputs.append(TerminalOutput(text: "File not found: \(fileName)", type: .error))
+        }
+    }
+    
+    private func editFile(_ components: [String]) {
+        guard components.count > 1 else {
+            outputs.append(TerminalOutput(text: "Usage: edit <filename>", type: .error))
+            return
+        }
+        
+        // Join all components after the command to handle filenames with spaces
+        let fileName = Array(components.dropFirst()).joined(separator: " ")
+        let fullPath = resolvePath(fileName)
+        
+        if FileManager.default.fileExists(atPath: fullPath) {
+            // Enter vim mode with the file
+            fileToEdit = fullPath
+            isInVimMode = true
+            outputs.append(TerminalOutput(text: "Entering vim mode for \(fileName)", type: .success))
+        } else {
+            outputs.append(TerminalOutput(text: "File not found: \(fileName)", type: .error))
+        }
+    }
+    
+    private func resolvePath(_ fileName: String) -> String {
+        if fileName.hasPrefix("/") {
+            return fileName
+        } else if fileName.hasPrefix("~") {
+            return fileName.replacingOccurrences(of: "~", with: FileManager.default.homeDirectoryForCurrentUser.path)
+        } else {
+            return URL(fileURLWithPath: currentDirectory).appendingPathComponent(fileName).path
+        }
+    }
+    
+    private func openVimShell() {
+        isInVimMode = true
+        outputs.append(TerminalOutput(text: "Entering Vim Shell mode", type: .success))
     }
 }

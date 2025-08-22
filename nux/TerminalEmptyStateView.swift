@@ -16,7 +16,8 @@ struct TerminalEmptyStateView: View {
         [
             Suggestion(title: "Install a package", subtitle: "Homebrew package manager", command: "brew install <package>"),
             Suggestion(title: "Open project in editor", subtitle: "From current directory", command: "code ."),
-            Suggestion(title: "Check system info", subtitle: "Kernel and architecture", command: "uname -a"),
+            Suggestion(title: "View a file", subtitle: "Open file in viewer", command: "open <filename>"),
+            Suggestion(title: "Edit a file", subtitle: "Open file in vim", command: "edit <filename>"),
             Suggestion(title: "List files", subtitle: "Long format, human readable", command: "ls -la"),
             Suggestion(title: "Get help", subtitle: "Built-in commands", command: "help")
         ]

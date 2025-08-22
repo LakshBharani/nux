@@ -22,6 +22,7 @@ struct ControlBarSimplified: View {
     @State private var textFieldFrame: CGRect = .zero
     @State private var promptWidth: CGFloat = 0
     @State private var showDirectoryBrowser = false
+    @State private var showFileBrowser = false
     @State private var directoryItems: [PopupItem] = []
     @State private var selectedDirectoryIndex: Int = 0
     
@@ -49,6 +50,17 @@ struct ControlBarSimplified: View {
             }
             .overlay(autocompletePopupOverlay)
             .overlay(directoryBrowserOverlay)
+            .sheet(isPresented: $showFileBrowser) {
+                FileBrowser(
+                    currentDirectory: terminal.currentDirectory,
+                    onFileSelected: { filePath in
+                        // Open the selected file
+                        terminal.fileToView = filePath
+                        terminal.showFileViewer = true
+                    }
+                )
+                .environmentObject(themeManager)
+            }
     }
     
     private var mainContent: some View {
@@ -265,6 +277,18 @@ struct ControlBarSimplified: View {
     
     private func loadDirectoryItems() {
         var items: [PopupItem] = []
+        
+        // Add "Browse Files" option
+        items.append(PopupItem(
+            id: "browse",
+            text: "Browse Files",
+            icon: "doc.text.magnifyingglass",
+            type: .file,
+            action: {
+                showFileBrowser = true
+                closeDirectoryBrowser()
+            }
+        ))
         
         // Add parent directory if not at root
         let currentURL = URL(fileURLWithPath: terminal.currentDirectory)

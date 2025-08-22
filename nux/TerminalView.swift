@@ -11,55 +11,65 @@ struct TerminalView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Terminal output area
-            if terminal.outputs.isEmpty {
-                TerminalEmptyStateView { suggestion in
-                    currentCommand = suggestion
-                    isInputFocused = true
+            if terminal.isInVimMode {
+                // Vim mode - replace entire terminal with vim editor
+                VimEditor(filePath: terminal.fileToEdit) { 
+                    // Exit vim mode callback
+                    terminal.isInVimMode = false
                 }
-                    .environmentObject(themeManager)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(themeManager.currentTheme.backgroundColor)
+                .environmentObject(themeManager)
             } else {
-                ScrollViewReader { proxy in
-                    GeometryReader { geo in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 8) {
-                                ForEach(terminal.outputs.indices, id: \.self) { index in
-                                    let output = terminal.outputs[index]
-                                    TerminalOutputRow(output: output)
-                                        .environmentObject(themeManager)
-                                        .id(index)
-                                }
-                                
-                                // Anchor at bottom for scrolling
-                                Spacer().frame(height: 20).id("bottom-spacer")
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            // Key: ensure content takes at least full height and sticks to bottom
-                            .frame(minHeight: geo.size.height, maxHeight: .infinity, alignment: .bottom)
-                        }
-                        .background(themeManager.currentTheme.backgroundColor)
+                // Normal terminal mode
+                // Terminal output area
+                if terminal.outputs.isEmpty {
+                    TerminalEmptyStateView { suggestion in
+                        currentCommand = suggestion
+                        isInputFocused = true
                     }
-                    .onChange(of: terminal.outputs.count) {
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo("bottom-spacer", anchor: .bottom)
+                        .environmentObject(themeManager)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(themeManager.currentTheme.backgroundColor)
+                } else {
+                    ScrollViewReader { proxy in
+                        GeometryReader { geo in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 8) {
+                                    ForEach(terminal.outputs.indices, id: \.self) { index in
+                                        let output = terminal.outputs[index]
+                                        TerminalOutputRow(output: output)
+                                            .environmentObject(themeManager)
+                                            .id(index)
+                                    }
+                                    
+                                    // Anchor at bottom for scrolling
+                                    Spacer().frame(height: 20).id("bottom-spacer")
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                // Key: ensure content takes at least full height and sticks to bottom
+                                .frame(minHeight: geo.size.height, maxHeight: .infinity, alignment: .bottom)
+                            }
+                            .background(themeManager.currentTheme.backgroundColor)
+                        }
+                        .onChange(of: terminal.outputs.count) {
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                proxy.scrollTo("bottom-spacer", anchor: .bottom)
+                            }
                         }
                     }
                 }
+                
+                // Control bar at bottom
+                ControlBarSimplified(
+                    currentCommand: $currentCommand,
+                    isInputFocused: $isInputFocused,
+                    autocomplete: autocomplete,
+                    terminal: terminal,
+                    onExecuteCommand: executeCommand,
+                    onHistoryNavigation: handleHistoryNavigation
+                )
+                .environmentObject(themeManager)
             }
-            
-            // Control bar at bottom
-            ControlBarSimplified(
-                currentCommand: $currentCommand,
-                isInputFocused: $isInputFocused,
-                autocomplete: autocomplete,
-                terminal: terminal,
-                onExecuteCommand: executeCommand,
-                onHistoryNavigation: handleHistoryNavigation
-            )
-            .environmentObject(themeManager)
         }
         .background(themeManager.currentTheme.backgroundColor)
         .onAppear {
@@ -68,6 +78,10 @@ struct TerminalView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+                .environmentObject(themeManager)
+        }
+        .sheet(isPresented: $terminal.showFileViewer) {
+            FileViewer(filePath: terminal.fileToView)
                 .environmentObject(themeManager)
         }
         .overlay(

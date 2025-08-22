@@ -14,6 +14,7 @@ class AutocompleteEngine: ObservableObject {
     private let commonCommands = [
         "ls", "cd", "pwd", "mkdir", "rmdir", "rm", "cp", "mv", "cat", "grep",
         "find", "which", "chmod", "chown", "ps", "top", "kill", "killall",
+        "open", "view", "edit", "vim", "nano",
         "git status", "git add", "git commit", "git push", "git pull", "git clone",
         "git checkout", "git branch", "git merge", "git log", "git diff",
         "npm install", "npm start", "npm run", "npm test", "npm build",
@@ -45,7 +46,7 @@ class AutocompleteEngine: ObservableObject {
         // Set the best match as ghost text
         if let bestMatch = suggestions.first {
             let completionWord = getCompletionWord(from: bestMatch, input: input)
-            if bestMatch.hasPrefix(input) && bestMatch.count > input.count {
+            if bestMatch.lowercased().hasPrefix(input.lowercased()) && bestMatch.count > input.count {
                 ghostText = String(bestMatch.dropFirst(input.count))
                 currentSuggestion = bestMatch
             } else {
@@ -68,7 +69,7 @@ class AutocompleteEngine: ObservableObject {
         
         // If we're completing an argument, return just the last part being completed
         if let lastInputWord = inputComponents.last,
-           let matchingComponent = suggestionComponents.first(where: { $0.hasPrefix(lastInputWord) }) {
+           let matchingComponent = suggestionComponents.first(where: { $0.lowercased().hasPrefix(lastInputWord.lowercased()) }) {
             return matchingComponent
         }
         
@@ -195,27 +196,27 @@ class AutocompleteEngine: ObservableObject {
         var suggestions: [String] = []
         
         if components.count == 1 {
-            // Suggesting commands
-            suggestions.append(contentsOf: commonCommands.filter { $0.hasPrefix(firstComponent) })
-            suggestions.append(contentsOf: commandHistory.filter { $0.hasPrefix(firstComponent) })
+            // Suggesting commands - case insensitive filtering, preserve original case
+            suggestions.append(contentsOf: commonCommands.filter { $0.lowercased().hasPrefix(firstComponent.lowercased()) })
+            suggestions.append(contentsOf: commandHistory.filter { $0.lowercased().hasPrefix(firstComponent.lowercased()) })
         } else {
             // Suggesting file/directory names for command arguments
             let lastComponent = components.last ?? ""
             
-            // Add directory suggestions
+            // Add directory suggestions - case insensitive filtering, preserve original case
             let dirSuggestions = directoryCache
-                .filter { $0.hasPrefix(lastComponent) }
+                .filter { $0.lowercased().hasPrefix(lastComponent.lowercased()) }
                 .map { components.dropLast().joined(separator: " ") + " " + $0 + "/" }
             suggestions.append(contentsOf: dirSuggestions)
             
-            // Add file suggestions
+            // Add file suggestions - case insensitive filtering, preserve original case
             let fileSuggestions = fileCache
-                .filter { $0.hasPrefix(lastComponent) }
+                .filter { $0.lowercased().hasPrefix(lastComponent.lowercased()) }
                 .map { components.dropLast().joined(separator: " ") + " " + $0 }
             suggestions.append(contentsOf: fileSuggestions)
             
             // Special handling for cd command - only directories
-            if firstComponent == "cd" {
+            if firstComponent.lowercased() == "cd" {
                 suggestions = dirSuggestions
             }
         }

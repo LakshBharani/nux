@@ -94,6 +94,11 @@ struct TerminalSessionsView: View {
         // Check if there are any commands to summarize
         let hasCommands = session.outputs.contains { $0.type == .command }
         
+        // Debug: Print the outputs to see what's actually there
+        print("Session outputs count: \(session.outputs.count)")
+        print("Output types: \(session.outputs.map { $0.type })")
+        print("Has commands: \(hasCommands)")
+        
         if !hasCommands {
             // Prepare empty state and then present
             isSummarizing = false
@@ -261,6 +266,7 @@ private struct SummarySheet: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 20)
                 }
             } else {
                 Spacer()
@@ -302,7 +308,7 @@ private struct SummarySheet: View {
             HStack { Spacer(); Button("Close") { dismiss() } }
         }
         .padding(20)
-        .frame(width: 560, height: 500)
+        .frame(minWidth: 560, maxWidth: 800, minHeight: 500, maxHeight: 700)
         .background(themeManager.currentTheme.backgroundColor)
     }
     
@@ -325,6 +331,8 @@ private struct SummarySheet: View {
                 .font(.system(size: 14))
                 .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.9))
                 .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+                .lineLimit(nil)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -359,6 +367,8 @@ private struct SummarySheet: View {
                             .font(.system(size: 14))
                             .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.9))
                             .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(nil)
                     }
                 }
             }

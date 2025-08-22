@@ -43,13 +43,35 @@ struct CommandInputView: View {
     
     private var commandInputField: some View {
         ZStack(alignment: .leading) {
-            // Ghost text (autocomplete preview) - only show when dropdown is not visible
+            // Ghost text (autocomplete preview) with tab button - only show when dropdown is not visible
             if !autocomplete.ghostText.isEmpty && !autocomplete.showDropdown {
                 HStack(spacing: 0) {
                     Text(currentCommand)
                         .opacity(0) // Invisible, just for positioning
                     Text(autocomplete.ghostText)
                         .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.4))
+                    
+                    // Tab button positioned right after ghost text
+                    if !autocomplete.allSuggestions.isEmpty {
+                        HStack(spacing: 4) {
+                            Text("⇥")
+                                .font(.system(size: 10, weight: .semibold, design: .default))
+                                .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
+                            Text("Tab")
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.5))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(themeManager.currentTheme.backgroundColor.opacity(0.4))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(themeManager.currentTheme.foregroundColor.opacity(0.15), lineWidth: 0.5)
+                        )
+                        .cornerRadius(4)
+                        .padding(.leading, 8)
+                    }
+                    
                     Spacer()
                 }
                 .font(.system(.body, design: .monospaced))
@@ -100,29 +122,6 @@ struct CommandInputView: View {
                     return .handled
                 }
         }
-        .overlay(alignment: .trailing) {
-            // Tab hint to indicate activating autocomplete popup
-            if !autocomplete.allSuggestions.isEmpty && !autocomplete.showDropdown {
-                HStack(spacing: 6) {
-                    Text("⇥")
-                        .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.75))
-                    Text("Tab")
-                        .font(.system(size: 11, weight: .medium, design: .default))
-                        .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.55))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(themeManager.currentTheme.backgroundColor.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(themeManager.currentTheme.foregroundColor.opacity(0.2), lineWidth: 1)
-                )
-                .cornerRadius(6)
-                .padding(.trailing, 2)
-                .allowsHitTesting(false)
-            }
-        }
     }
     
     // MARK: - Helper Methods
@@ -171,7 +170,14 @@ struct CommandInputView: View {
             if autocomplete.showDropdown {
                 autocomplete.navigateDown()
             } else {
-                autocomplete.showDropdownSuggestions()
+                // If there's only one suggestion, fill it directly
+                if autocomplete.allSuggestions.count == 1 {
+                    currentCommand = autocomplete.allSuggestions[0]
+                    autocomplete.clearSuggestions()
+                } else {
+                    // Multiple suggestions - show dropdown
+                    autocomplete.showDropdownSuggestions()
+                }
             }
         }
     }
