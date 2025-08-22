@@ -4,10 +4,13 @@ struct TerminalView: View {
     @ObservedObject var terminal: TerminalSession
     @StateObject private var commandHistory = CommandHistory()
     @StateObject private var autocomplete = AutocompleteEngine()
+    @StateObject private var aiContext = AIContextManager()
     @EnvironmentObject private var themeManager: ThemeManager
     @State private var currentCommand = ""
     @State private var showSettings = false
+    @State private var shouldScrollToBottom = false
     @FocusState private var isInputFocused: Bool
+    @State private var hoveredCommandIndex: Int?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -16,11 +19,17 @@ struct TerminalView: View {
                 VimEditor(filePath: terminal.fileToEdit) { 
                     // Exit vim mode callback
                     terminal.isInVimMode = false
+                    
+                    // Trigger scroll to bottom and restore focus
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        shouldScrollToBottom = true
+                        isInputFocused = true
+                    }
                 }
                 .environmentObject(themeManager)
             } else {
                 // Normal terminal mode
-                // Terminal output area
+                // Terminal output area (always show terminal, never separate AI view)
                 if terminal.outputs.isEmpty {
                     TerminalEmptyStateView { suggestion in
                         currentCommand = suggestion
@@ -36,9 +45,24 @@ struct TerminalView: View {
                                 LazyVStack(alignment: .leading, spacing: 8) {
                                     ForEach(terminal.outputs.indices, id: \.self) { index in
                                         let output = terminal.outputs[index]
-                                        TerminalOutputRow(output: output)
-                                            .environmentObject(themeManager)
-                                            .id(index)
+                                        // Determine the owning command index for this row (self for commands; nearest previous command otherwise)
+                                        let ownerCommandIndex: Int = {
+                                            if output.type == .command { return index }
+                                            for i in stride(from: index - 1, through: 0, by: -1) {
+                                                if terminal.outputs[i].type == .command { return i }
+                                            }
+                                            return index
+                                        }()
+                                        TerminalOutputRow(
+                                            output: output,
+                                            outputIndex: index,
+                                            ownerCommandIndex: ownerCommandIndex,
+                                            allOutputs: terminal.outputs,
+                                            hoveredCommandIndex: $hoveredCommandIndex
+                                        )
+                                        .environmentObject(themeManager)
+                                        .environmentObject(aiContext)
+                                        .id(index)
                                     }
                                     
                                     // Anchor at bottom for scrolling
@@ -56,6 +80,14 @@ struct TerminalView: View {
                                 proxy.scrollTo("bottom-spacer", anchor: .bottom)
                             }
                         }
+                        .onChange(of: shouldScrollToBottom) {
+                            if shouldScrollToBottom {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    proxy.scrollTo("bottom-spacer", anchor: .bottom)
+                                }
+                                shouldScrollToBottom = false
+                            }
+                        }
                     }
                 }
                 
@@ -65,6 +97,7 @@ struct TerminalView: View {
                     isInputFocused: $isInputFocused,
                     autocomplete: autocomplete,
                     terminal: terminal,
+                    aiContext: aiContext,
                     onExecuteCommand: executeCommand,
                     onHistoryNavigation: handleHistoryNavigation
                 )
@@ -85,12 +118,26 @@ struct TerminalView: View {
                 .environmentObject(themeManager)
         }
         .overlay(
-            // Hidden button for keyboard shortcut
-            Button("Settings") {
-                showSettings = true
+            VStack {
+                // Hidden buttons for keyboard shortcuts
+                Button("Settings") {
+                    showSettings = true
+                }
+                .keyboardShortcut(",", modifiers: .command)
+                .hidden()
+                
+                Button("Agent Mode") {
+                    aiContext.toggleAIMode()
+                }
+                .keyboardShortcut("i", modifiers: .command)
+                .hidden()
+                
+                Button("Attach Context") {
+                    aiContext.attachLatestCommand(from: terminal.outputs)
+                }
+                .keyboardShortcut(.upArrow, modifiers: .command)
+                .hidden()
             }
-            .keyboardShortcut(",", modifiers: .command)
-            .hidden()
         )
     }
     
@@ -101,11 +148,21 @@ struct TerminalView: View {
     private func executeCommand() {
         guard !currentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
-        commandHistory.addCommand(currentCommand)
-        autocomplete.addToHistory(currentCommand)
-        terminal.executeCommand(currentCommand)
-        currentCommand = ""
-        autocomplete.clearSuggestions()
+        if aiContext.isAIMode {
+            // Execute AI prompt
+            Task {
+                await aiContext.executeAIPrompt(currentCommand)
+            }
+            currentCommand = ""
+        } else {
+            // Execute regular command
+            commandHistory.addCommand(currentCommand)
+            autocomplete.addToHistory(currentCommand)
+            terminal.executeCommand(currentCommand)
+            currentCommand = ""
+            autocomplete.clearSuggestions()
+        }
+        
         isInputFocused = true
     }
     
@@ -126,7 +183,14 @@ struct TerminalView: View {
 
 struct TerminalOutputRow: View {
     let output: TerminalOutput
+    let outputIndex: Int
+    let ownerCommandIndex: Int
+    let allOutputs: [TerminalOutput]
+    @Binding var hoveredCommandIndex: Int?
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var aiContext: AIContextManager
+    @State private var isHovered = false
+    private let buttonWidth: CGFloat = 170
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -148,6 +212,37 @@ struct TerminalOutputRow: View {
                             .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
                         
                         Spacer()
+                        
+                        // Reserved area for attach/remove button to prevent layout shift
+                        HStack(spacing: 0) {
+                            let attached = isOwnerAttached()
+                            Button(action: {
+                                if attached { removeCommandFromContext() } else { attachCommandAsContext() }
+                            }) {
+                                HStack(spacing: 6) {
+                                    if attached {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 10, weight: .medium))
+                                        Text("Remove context")
+                                            .font(.system(size: 10, weight: .medium))
+                                    } else {
+                                        Image(systemName: "paperclip")
+                                            .font(.system(size: 10, weight: .medium))
+                                        Text("Attach as context")
+                                            .font(.system(size: 10, weight: .medium))
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(attached ? themeManager.currentTheme.foregroundColor.opacity(0.08) : themeManager.currentTheme.accentColor.opacity(0.1))
+                                .foregroundColor(attached ? themeManager.currentTheme.foregroundColor.opacity(0.75) : themeManager.currentTheme.accentColor)
+                                .cornerRadius(4)
+                            }
+                            .buttonStyle(.plain)
+                            .opacity(hoveredCommandIndex == ownerCommandIndex || attached ? 1 : 0)
+                            .animation(.easeOut(duration: 0.12), value: hoveredCommandIndex == ownerCommandIndex || attached)
+                        }
+                        .frame(width: buttonWidth, alignment: .trailing)
                     }
                 }
                 
@@ -173,6 +268,56 @@ struct TerminalOutputRow: View {
             }
         }
         .padding(.vertical, output.type == .command ? 0 : 2)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                hoveredCommandIndex = ownerCommandIndex
+            } else if hoveredCommandIndex == ownerCommandIndex {
+                hoveredCommandIndex = nil
+            }
+        }
+    }
+    
+    private func attachCommandAsContext() {
+        let followingOutputs = getOutputsAfterCommand(at: outputIndex, in: allOutputs)
+        let attachedCommand = AIAttachedCommand(from: output, commandOutput: followingOutputs)
+        
+        // Avoid duplicates
+        if !aiContext.attachedCommands.contains(where: { $0.command == attachedCommand.command && $0.timestamp == attachedCommand.timestamp }) {
+            aiContext.attachedCommands.append(attachedCommand)
+            aiContext.isAIMode = true
+        }
+    }
+    
+    private func removeCommandFromContext() {
+        // Identify by command text and timestamp
+        aiContext.attachedCommands.removeAll { item in
+            item.command == output.text && item.timestamp == output.timestamp
+        }
+    }
+    
+    private func isOwnerAttached() -> Bool {
+        return aiContext.attachedCommands.contains { item in
+            item.command == output.text && item.timestamp == output.timestamp
+        }
+    }
+    
+    private func getOutputsAfterCommand(at commandIndex: Int, in outputs: [TerminalOutput]) -> [TerminalOutput] {
+        let startIndex = commandIndex + 1
+        guard startIndex < outputs.count else { return [] }
+        
+        var result: [TerminalOutput] = []
+        
+        for i in startIndex..<outputs.count {
+            let output = outputs[i]
+            if output.type == .command {
+                break // Stop at next command
+            }
+            result.append(output)
+        }
+        
+        return result
     }
     
     // Keeping helper if we want to toggle formatting later

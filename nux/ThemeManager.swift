@@ -151,4 +151,106 @@ class ThemeManager: ObservableObject {
     func getSavedThemeName() -> String {
         UserDefaults.standard.string(forKey: themeDefaultsKey) ?? "nux Dark"
     }
+    
+    // MARK: - Agent Highlight Color (Theme-aware)
+    // Returns a highly contrasting color to use for Agent mode UI that avoids
+    // clashing with the theme's existing accent/warning palette.
+    func agentColor() -> Color {
+        // Candidate palette
+        let gold = Color(red: 0.95, green: 0.75, blue: 0.10)   // preferred for dark themes
+        let cyan = Color(red: 0.00, green: 0.85, blue: 0.90)   // preferred for light/cool themes
+        let magenta = Color(red: 0.95, green: 0.35, blue: 0.85) // fallback pop
+
+        // Detect theme hue tendencies
+        let accent = currentTheme.accentColor
+        let warning = currentTheme.warningColor
+        let accentHue = approximateHue(for: accent)
+        let warningHue = approximateHue(for: warning)
+        // Rough hue buckets in [0,1]
+        func isYellowish(_ h: CGFloat) -> Bool { angularDistance(h, 0.125) < 0.08 }
+
+        let themeYellowish = isYellowish(accentHue) || isYellowish(warningHue)
+
+        // Background luminance to decide dark vs light theme bias
+        let bg = currentTheme.backgroundColor
+        let bgLum = relativeLuminance(bg)
+
+        // Compute contrasts once
+        let goldContrast = contrastRatio(gold, bg)
+        let cyanContrast = contrastRatio(cyan, bg)
+        let magentaContrast = contrastRatio(magenta, bg)
+
+        // Heuristic:
+        // - Prefer GOLD on dark themes when not already yellow-ish and contrast is decent
+        // - Prefer CYAN on light themes or when theme already leans yellow
+        // - Otherwise pick the highest-contrast of the three
+        if bgLum < 0.25 { // dark theme
+            if !themeYellowish && goldContrast >= 3.0 { return gold }
+            // Fall back to highest contrast
+            let best = max(goldContrast, cyanContrast, magentaContrast)
+            if best == goldContrast { return gold }
+            if best == cyanContrast { return cyan }
+            return magenta
+        } else { // lighter theme
+            if !themeYellowish && cyanContrast >= 3.5 { return cyan }
+            let best = max(goldContrast, cyanContrast, magentaContrast)
+            if best == cyanContrast { return cyan }
+            if best == goldContrast { return gold }
+            return magenta
+        }
+    }
+    
+    // MARK: - Color Utilities (approximate; sufficient for theme picking)
+    private func components(for color: Color) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+        #if os(macOS)
+        let ns = NSColor(color)
+        let conv = ns.usingColorSpace(.extendedSRGB) ?? ns
+        return (conv.redComponent, conv.greenComponent, conv.blueComponent)
+        #else
+        let ui = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, &g, &b, &a)
+        return (r, g, b)
+        #endif
+    }
+    
+    private func approximateHue(for color: Color) -> CGFloat {
+        let c = components(for: color)
+        let maxV = max(c.r, max(c.g, c.b))
+        let minV = min(c.r, min(c.g, c.b))
+        let delta = maxV - minV
+        if delta == 0 { return 0 }
+        var h: CGFloat
+        if maxV == c.r {
+            h = (c.g - c.b) / delta
+        } else if maxV == c.g {
+            h = 2 + (c.b - c.r) / delta
+        } else {
+            h = 4 + (c.r - c.g) / delta
+        }
+        h /= 6
+        if h < 0 { h += 1 }
+        return h
+    }
+    
+    private func relativeLuminance(_ color: Color) -> CGFloat {
+        let c = components(for: color)
+        func adjust(_ v: CGFloat) -> CGFloat {
+            return (v <= 0.03928) ? (v / 12.92) : pow((v + 0.055) / 1.055, 2.4)
+        }
+        let r = adjust(c.r), g = adjust(c.g), b = adjust(c.b)
+        return 0.2126*r + 0.7152*g + 0.0722*b
+        }
+    
+    private func contrastRatio(_ a: Color, _ b: Color) -> CGFloat {
+        let L1 = relativeLuminance(a)
+        let L2 = relativeLuminance(b)
+        let (maxL, minL) = (max(L1, L2), min(L1, L2))
+        return (maxL + 0.05) / (minL + 0.05)
+    }
+    
+    private func angularDistance(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
+        let diff = abs(a - b)
+        return min(diff, 1 - diff)
+    }
 }

@@ -42,7 +42,7 @@ struct TerminalSessionsView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: newSession) { Image(systemName: "plus") }
+                Button(action: { showSettingsSheet = true }) { Image(systemName: "gear") }
             }
         }
     }
@@ -136,65 +136,75 @@ struct TerminalSessionsView: View {
 private extension TerminalSessionsView {
     var sidebar: some View {
         VStack(spacing: 0) {
-            List(selection: $selectedId) {
-                Section("Sessions") {
-                    ForEach(sessions) { item in
-                        HStack(spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "terminal")
-                                Text(title(for: item.session))
-                                    .lineLimit(1)
-                                    .truncationMode(.head)
-                            }
-                            Spacer()
-                            Button {
-                                summarize(item.session)
-                            } label: {
-                                Image(systemName: "text.bubble")
-                                    .foregroundColor((selectedId == item.id) ? themeManager.currentTheme.foregroundColor : themeManager.currentTheme.accentColor)
-                                    .font(.system(size: 12))
-                            }
-                            .buttonStyle(.borderless)
-                            .id("summarize-\(themeManager.currentTheme.accentColor.description)")
-                            Button {
-                                close(item.id)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .foregroundColor(themeManager.currentTheme.foregroundColor)
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .tag(item.id)
-                        .contextMenu {
-                            Button("Summarize") { summarize(item.session) }
-                            Button("Close") { close(item.id) }
-                        }
-                    }
-                    .onDelete(perform: delete)
+            // Header with title and New Session button at the top
+            HStack(spacing: 8) {
+                Text("Sessions")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.7))
+                Spacer()
+                Button(action: newSession) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                        .padding(6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(themeManager.currentTheme.backgroundColor.opacity(0.4))
+                        )
                 }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(themeManager.currentTheme.backgroundColor)
+
+            List(selection: $selectedId) {
+                ForEach(sessions) { item in
+                    HStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "terminal")
+                            Text(title(for: item.session))
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                        Spacer()
+                        Button {
+                            summarize(item.session)
+                        } label: {
+                            Image(systemName: "text.bubble")
+                                .foregroundColor((selectedId == item.id) ? themeManager.currentTheme.foregroundColor : themeManager.currentTheme.accentColor)
+                                .font(.system(size: 12))
+                        }
+                        .buttonStyle(.borderless)
+                        .id("summarize-\(themeManager.currentTheme.accentColor.description)")
+                        Button {
+                            close(item.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .foregroundColor(themeManager.currentTheme.foregroundColor)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .tag(item.id)
+                    .contextMenu {
+                        Button("Summarize") { summarize(item.session) }
+                        Button("Close") { close(item.id) }
+                    }
+                }
+                .onDelete(perform: delete)
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(themeManager.currentTheme.backgroundColor)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             
             Divider()
                 .background(themeManager.currentTheme.foregroundColor.opacity(0.1))
             
-            Button(action: { showSettingsSheet = true }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "gear")
-                        .foregroundColor(themeManager.currentTheme.accentColor)
-                    Text("Settings")
-                        .foregroundColor(themeManager.currentTheme.foregroundColor)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .buttonStyle(.plain)
-            .background(themeManager.currentTheme.backgroundColor.opacity(0.5))
-            .id("settings-\(themeManager.currentTheme.accentColor.description)")
+            // Footer space preserved for future items
+            Color.clear.frame(height: 1)
         }
         .frame(minWidth: 260, maxWidth: .infinity)
     }

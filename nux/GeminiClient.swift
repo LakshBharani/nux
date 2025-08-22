@@ -153,6 +153,41 @@ final class GeminiClient {
             throw GeminiError.invalidResponse
         }
     }
+    
+    // MARK: - AI Assistant Methods
+    
+    func generateResponse(prompt: String) async throws -> String {
+        guard let apiKey = getApiKey(), apiKey.isEmpty == false else {
+            throw GeminiError.missingApiKey
+        }
+        let urlString = "\(endpointBase)\(model):generateContent?key=\(apiKey)"
+        guard let url = URL(string: urlString) else { throw GeminiError.invalidResponse }
+        
+        let reqBody = GenerateRequest(contents: [
+            .init(role: "user", parts: [.init(text: prompt)])
+        ])
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(reqBody)
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                if let text = String(data: data, encoding: .utf8), text.isEmpty == false {
+                    throw GeminiError.message(text)
+                }
+                throw GeminiError.invalidResponse
+            }
+            let decoded = try JSONDecoder().decode(GenerateResponse.self, from: data)
+            if let text = decoded.candidates?.first?.content?.parts?.compactMap({ $0.text }).joined(separator: "\n"), !text.isEmpty {
+                return text
+            }
+            throw GeminiError.invalidResponse
+        } catch {
+            throw GeminiError.network(error)
+        }
+    }
 
     // MARK: - Post-processing to enforce brevity and plain text
     private func normalize(summary s: SessionSummary) -> SessionSummary {

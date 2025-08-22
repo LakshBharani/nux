@@ -13,6 +13,7 @@ struct ControlBarSimplified: View {
     @FocusState.Binding var isInputFocused: Bool
     @ObservedObject var autocomplete: AutocompleteEngine
     @ObservedObject var terminal: TerminalSession
+    @ObservedObject var aiContext: AIContextManager
     @EnvironmentObject var themeManager: ThemeManager
     
     let onExecuteCommand: () -> Void
@@ -22,7 +23,6 @@ struct ControlBarSimplified: View {
     @State private var textFieldFrame: CGRect = .zero
     @State private var promptWidth: CGFloat = 0
     @State private var showDirectoryBrowser = false
-    @State private var showFileBrowser = false
     @State private var directoryItems: [PopupItem] = []
     @State private var selectedDirectoryIndex: Int = 0
     
@@ -50,23 +50,18 @@ struct ControlBarSimplified: View {
             }
             .overlay(autocompletePopupOverlay)
             .overlay(directoryBrowserOverlay)
-            .sheet(isPresented: $showFileBrowser) {
-                FileBrowser(
-                    currentDirectory: terminal.currentDirectory,
-                    onFileSelected: { filePath in
-                        // Open the selected file
-                        terminal.fileToView = filePath
-                        terminal.showFileViewer = true
-                    }
-                )
-                .environmentObject(themeManager)
-            }
     }
     
     private var mainContent: some View {
         VStack(spacing: 0) {
+            // Show AI conversation history if in AI mode and has conversations
+            if aiContext.isAIMode && !aiContext.conversationHistory.isEmpty {
+                AIConversationBarView(aiContext: aiContext)
+                    .environmentObject(themeManager)
+            }
+            
             VStack(spacing: 8) {
-                // Top line: Directory info with current directory
+                // Top line: Directory info with current directory and AI indicators
                 HStack(spacing: 12) {
                     // Current directory path (clickable)
                     if let context = fileContext {
@@ -93,6 +88,77 @@ struct ControlBarSimplified: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        
+                        // Always show Agent and Attach Context labels with shortcuts
+                        HStack(spacing: 8) {
+                            // Agent Mode indicator (always visible)
+                            HStack(spacing: 4) {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.5))
+                                
+                                Text("Agent")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.5))
+                                
+                                HStack(spacing: 2) {
+                                    KeyCap(
+                                        label: "⌘",
+                                        textColor: aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.6),
+                                        bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
+                                    )
+                                    KeyCap(
+                                        label: "I",
+                                        textColor: aiContext.isAIMode ? themeManager.agentColor() : themeManager.currentTheme.foregroundColor.opacity(0.6),
+                                        bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
+                                    )
+                                }
+                                
+                                if aiContext.isProcessing {
+                                    ProgressView()
+                                        .scaleEffect(0.6)
+                                        .frame(width: 8, height: 8)
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(aiContext.isAIMode ? themeManager.agentColor().opacity(0.18) : themeManager.currentTheme.foregroundColor.opacity(0.05))
+                            .cornerRadius(3)
+                            
+                            // Attach Context indicator (always visible)
+                            HStack(spacing: 4) {
+                                Image(systemName: "paperclip")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(aiContext.hasContext ? themeManager.currentTheme.accentColor : themeManager.currentTheme.foregroundColor.opacity(0.5))
+                                
+                                Text("Attach context")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(aiContext.hasContext ? themeManager.currentTheme.accentColor : themeManager.currentTheme.foregroundColor.opacity(0.5))
+                                
+                                HStack(spacing: 2) {
+                                    KeyCap(
+                                        label: "⌘",
+                                        textColor: aiContext.hasContext ? themeManager.currentTheme.accentColor : themeManager.currentTheme.foregroundColor.opacity(0.6),
+                                        bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
+                                    )
+                                    KeyCap(
+                                        label: "↑",
+                                        textColor: aiContext.hasContext ? themeManager.currentTheme.accentColor : themeManager.currentTheme.foregroundColor.opacity(0.6),
+                                        bgColor: themeManager.currentTheme.foregroundColor.opacity(0.1)
+                                    )
+                                }
+                                
+                                if aiContext.hasContext {
+                                    Text("(\(aiContext.contextSummary))")
+                                        .font(.system(size: 8, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(aiContext.hasContext ? themeManager.currentTheme.accentColor.opacity(0.1) : themeManager.currentTheme.foregroundColor.opacity(0.05))
+                            .cornerRadius(3)
+                        }
                         
                         Spacer()
                         
@@ -136,6 +202,7 @@ struct ControlBarSimplified: View {
                         isInputFocused: $isInputFocused,
                         autocomplete: autocomplete,
                         terminal: terminal,
+                        aiContext: aiContext,
                         onExecuteCommand: onExecuteCommand,
                         onHistoryNavigation: onHistoryNavigation,
                         onGeometryChange: handleGeometryChange
@@ -278,18 +345,6 @@ struct ControlBarSimplified: View {
     private func loadDirectoryItems() {
         var items: [PopupItem] = []
         
-        // Add "Browse Files" option
-        items.append(PopupItem(
-            id: "browse",
-            text: "Browse Files",
-            icon: "doc.text.magnifyingglass",
-            type: .file,
-            action: {
-                showFileBrowser = true
-                closeDirectoryBrowser()
-            }
-        ))
-        
         // Add parent directory if not at root
         let currentURL = URL(fileURLWithPath: terminal.currentDirectory)
         if currentURL.path != "/" {
@@ -407,10 +462,28 @@ struct ControlBarSimplified: View {
     }
 }
 
+// Uniform keycap view for shortcut badges
+private struct KeyCap: View {
+    let label: String
+    let textColor: Color
+    let bgColor: Color
+    
+    var body: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundColor(textColor)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(bgColor)
+            .cornerRadius(3)
+    }
+}
+
 #Preview {
     @Previewable @StateObject var themeManager = ThemeManager()
     @Previewable @StateObject var terminal = TerminalSession()
     @Previewable @StateObject var autocomplete = AutocompleteEngine()
+    @Previewable @StateObject var aiContext = AIContextManager()
     @Previewable @State var command = ""
     @Previewable @FocusState var focused: Bool
     
@@ -419,6 +492,7 @@ struct ControlBarSimplified: View {
         isInputFocused: $focused,
         autocomplete: autocomplete,
         terminal: terminal,
+        aiContext: aiContext,
         onExecuteCommand: { },
         onHistoryNavigation: { _ in }
     )

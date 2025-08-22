@@ -96,7 +96,7 @@ struct TerminalTabsView: View {
             .contentShape(Rectangle())
             .zIndex(10)
         }
-        .background(themeManager.currentTheme.backgroundColor.opacity(0.95))
+        .background(themeManager.currentTheme.backgroundColor)
         .zIndex(10)
     }
     
