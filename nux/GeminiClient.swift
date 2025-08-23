@@ -20,11 +20,83 @@ enum GeminiError: Error, LocalizedError {
     }
 }
 
+// MARK: - Gemini LLM Provider
+
+final class GeminiLLMProvider: LLMProvider {
+    let providerType: LLMProviderType = .gemini
+    
+    var isConfigured: Bool {
+        guard let apiKey = getApiKey() else { return false }
+        return !apiKey.isEmpty
+    }
+    
+    var isAvailable: Bool {
+        get async {
+            // Simple availability check - could be enhanced with actual API ping
+            return isConfigured
+        }
+    }
+    
+    private let geminiClient = GeminiClient.shared
+    
+    // Delegate all methods to the existing GeminiClient
+    func summarize(outputs: [TerminalOutput]) async throws -> String {
+        do {
+            return try await geminiClient.summarize(outputs: outputs)
+        } catch let error as GeminiError {
+            throw convertGeminiError(error)
+        }
+    }
+    
+    func summarizeStructured(outputs: [TerminalOutput]) async throws -> SessionSummary {
+        do {
+            return try await geminiClient.summarizeStructured(outputs: outputs)
+        } catch let error as GeminiError {
+            throw convertGeminiError(error)
+        }
+    }
+    
+    func generateAction(prompt: String) async throws -> AgentAction {
+        do {
+            return try await geminiClient.generateAction(prompt: prompt)
+        } catch let error as GeminiError {
+            throw convertGeminiError(error)
+        }
+    }
+    
+    func generateResponse(prompt: String) async throws -> String {
+        do {
+            return try await geminiClient.generateResponse(prompt: prompt)
+        } catch let error as GeminiError {
+            throw convertGeminiError(error)
+        }
+    }
+    
+    private func getApiKey() -> String? {
+        return geminiClient.getApiKey()
+    }
+    
+    private func convertGeminiError(_ error: GeminiError) -> LLMError {
+        switch error {
+        case .missingApiKey:
+            return .missingConfiguration
+        case .invalidResponse:
+            return .invalidResponse
+        case .network(let networkError):
+            return .network(networkError)
+        case .message(let text):
+            return .message(text)
+        }
+    }
+}
+
+// MARK: - Original Gemini Client (kept for backward compatibility)
+
 final class GeminiClient {
     static let shared = GeminiClient()
     private init() {}
     
-    private let model = "gemini-2.5-flash"
+    private let model = "gemini-1.5-flash"
     private let endpointBase = "https://generativelanguage.googleapis.com/v1beta/models/"
     private let apiKeyDefaultsKey = "GeminiAPIKey"
     
@@ -47,27 +119,7 @@ final class GeminiClient {
     struct Content: Decodable { let parts: [Part]? }
     struct Part: Decodable { let text: String? }
     
-    struct SessionSummary: Codable {
-        let summary: String
-        let commands: [String]
-        let errors: [String]
-        let nextSteps: [String]
-        let keyInsights: [String]
-        let potentialIssues: [String]
-        let usefulCommands: [String]
-        let currentState: String
-        let recommendations: [String]
-    }
-    
-    struct AgentAction: Codable {
-        let explanation: String
-        let suggestedCommand: String
-        let autoExecute: Bool
-        let alternatives: [String]
-        let notes: [String]
-        let risk: String
-        let requiresConfirmation: Bool
-    }
+
     
     func summarize(outputs: [TerminalOutput]) async throws -> String {
         guard let apiKey = getApiKey(), apiKey.isEmpty == false else {

@@ -36,23 +36,15 @@ class AutocompleteEngine: ObservableObject {
             return
         }
         
-        // Update file and directory cache
         updateFileCache(currentDirectory: currentDirectory)
         
-        // Get suggestions based on input
         let suggestions = getSuggestions(for: input, currentDirectory: currentDirectory)
         allSuggestions = suggestions
         
-        // Set the best match as ghost text
         if let bestMatch = suggestions.first {
-            let completionWord = getCompletionWord(from: bestMatch, input: input)
-            if bestMatch.lowercased().hasPrefix(input.lowercased()) && bestMatch.count > input.count {
-                ghostText = String(bestMatch.dropFirst(input.count))
-                currentSuggestion = bestMatch
-            } else {
-                ghostText = ""
-                currentSuggestion = bestMatch
-            }
+            let ghostTextWord = getGhostTextWord(from: bestMatch, input: input)
+            ghostText = ghostTextWord
+            currentSuggestion = bestMatch
         } else {
             clearSuggestions()
         }
@@ -62,19 +54,77 @@ class AutocompleteEngine: ObservableObject {
         let inputComponents = input.components(separatedBy: .whitespaces)
         let suggestionComponents = suggestion.components(separatedBy: .whitespaces)
         
-        // If we're completing a command (single word input)
         if inputComponents.count == 1 {
             return suggestionComponents.first ?? suggestion
         }
         
-        // If we're completing an argument, return just the last part being completed
-        if let lastInputWord = inputComponents.last,
-           let matchingComponent = suggestionComponents.first(where: { $0.lowercased().hasPrefix(lastInputWord.lowercased()) }) {
-            return matchingComponent
+        if suggestionComponents.count > 1 {
+            let argumentParts = Array(suggestionComponents.dropFirst())
+            let argumentString = argumentParts.joined(separator: " ")
+            
+            if argumentString.contains("/") {
+                return URL(fileURLWithPath: argumentString).lastPathComponent
+            }
+            
+            return argumentString
         }
         
-        // Fallback: return the last component of the suggestion
-        return suggestionComponents.last ?? suggestion
+        if suggestion.contains("/") {
+            return URL(fileURLWithPath: suggestion).lastPathComponent
+        }
+        
+        return suggestion
+    }
+    
+    func getGhostTextWord(from suggestion: String, input: String) -> String {
+        let inputComponents = input.components(separatedBy: .whitespaces)
+        let suggestionComponents = suggestion.components(separatedBy: .whitespaces)
+        
+        if inputComponents.count == 1 {
+            let command = suggestionComponents.first ?? suggestion
+            let lastInputWord = inputComponents.last ?? ""
+            
+            if command.lowercased().hasPrefix(lastInputWord.lowercased()) && command.count > lastInputWord.count {
+                return String(command.dropFirst(lastInputWord.count))
+            }
+            return ""
+        }
+        
+        if suggestionComponents.count > 1 {
+            let argumentParts = Array(suggestionComponents.dropFirst())
+            let argumentString = argumentParts.joined(separator: " ")
+            let lastInputWord = inputComponents.last ?? ""
+            
+            if argumentString.contains("/") {
+                let filename = URL(fileURLWithPath: argumentString).lastPathComponent
+                
+                if filename.lowercased().hasPrefix(lastInputWord.lowercased()) && filename.count > lastInputWord.count {
+                    return String(filename.dropFirst(lastInputWord.count))
+                }
+                return ""
+            }
+            
+            if argumentString.lowercased().hasPrefix(lastInputWord.lowercased()) && argumentString.count > lastInputWord.count {
+                return String(argumentString.dropFirst(lastInputWord.count))
+            }
+            return ""
+        }
+        
+        if suggestion.contains("/") {
+            let filename = URL(fileURLWithPath: suggestion).lastPathComponent
+            let lastInputWord = inputComponents.last ?? ""
+            
+            if filename.lowercased().hasPrefix(lastInputWord.lowercased()) && filename.count > lastInputWord.count {
+                return String(filename.dropFirst(lastInputWord.count))
+            }
+            return ""
+        }
+        
+        let lastInputWord = inputComponents.last ?? ""
+        if suggestion.lowercased().hasPrefix(lastInputWord.lowercased()) && suggestion.count > lastInputWord.count {
+            return String(suggestion.dropFirst(lastInputWord.count))
+        }
+        return ""
     }
     
     func showDropdownSuggestions() {
@@ -93,7 +143,6 @@ class AutocompleteEngine: ObservableObject {
         selectedIndex = (selectedIndex + 1) % allSuggestions.count
         currentSuggestion = allSuggestions[selectedIndex]
         
-        // Auto-scroll to keep selected item visible
         updateVisibleRange()
     }
     
@@ -119,22 +168,49 @@ class AutocompleteEngine: ObservableObject {
     }
     
     private func updateVisibleRange() {
-        // If selected item is below visible range, scroll down
         if selectedIndex >= visibleStartIndex + maxVisibleItems {
             visibleStartIndex = selectedIndex - maxVisibleItems + 1
         }
-        // If selected item is above visible range, scroll up
         else if selectedIndex < visibleStartIndex {
             visibleStartIndex = selectedIndex
         }
         
-        // Ensure we don't scroll past the end
         let maxStartIndex = max(0, allSuggestions.count - maxVisibleItems)
         visibleStartIndex = min(visibleStartIndex, maxStartIndex)
     }
     
-    func acceptSelectedSuggestion() -> String {
-        let result = showDropdown ? currentSuggestion : currentSuggestion
+    func acceptSelectedSuggestion(currentInput: String) -> String {
+        guard !currentSuggestion.isEmpty else {
+            hideDropdown()
+            return currentInput
+        }
+        
+        let inputComponents = currentInput.components(separatedBy: .whitespaces)
+        let suggestionComponents = currentSuggestion.components(separatedBy: .whitespaces)
+        
+        var result: String
+        
+        if inputComponents.count == 1 {
+            result = suggestionComponents.first ?? currentSuggestion
+        } else {
+            let commandPart = Array(inputComponents.dropLast()).joined(separator: " ")
+            let lastComponent = inputComponents.last ?? ""
+            
+            if suggestionComponents.count > 1 {
+                let argumentParts = Array(suggestionComponents.dropFirst())
+                let argumentString = argumentParts.joined(separator: " ")
+                
+                if argumentString.contains("/") {
+                    let filename = URL(fileURLWithPath: argumentString).lastPathComponent
+                    result = "\(commandPart) \(filename)"
+                } else {
+                    result = "\(commandPart) \(argumentString)"
+                }
+            } else {
+                result = "\(commandPart) \(currentSuggestion)"
+            }
+        }
+        
         hideDropdown()
         return result
     }
@@ -159,7 +235,6 @@ class AutocompleteEngine: ObservableObject {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty && (commandHistory.isEmpty || commandHistory.last != trimmed) {
             commandHistory.append(trimmed)
-            // Keep only last N commands
             if commandHistory.count > TerminalConstants.maxHistoryItems {
                 commandHistory.removeFirst()
             }
@@ -185,7 +260,6 @@ class AutocompleteEngine: ObservableObject {
                 }
             }
         } catch {
-            // Ignore errors
         }
     }
     
@@ -196,32 +270,25 @@ class AutocompleteEngine: ObservableObject {
         var suggestions: [String] = []
         
         if components.count == 1 {
-            // Suggesting commands - case insensitive filtering, preserve original case
             suggestions.append(contentsOf: commonCommands.filter { $0.lowercased().hasPrefix(firstComponent.lowercased()) })
             suggestions.append(contentsOf: commandHistory.filter { $0.lowercased().hasPrefix(firstComponent.lowercased()) })
         } else {
-            // Suggesting file/directory names for command arguments
             let lastComponent = components.last ?? ""
             
-            // Add directory suggestions - case insensitive filtering, preserve original case
             let dirSuggestions = directoryCache
                 .filter { $0.lowercased().hasPrefix(lastComponent.lowercased()) }
-                .map { components.dropLast().joined(separator: " ") + " " + $0 + "/" }
+                .map { $0 + "/" }
             suggestions.append(contentsOf: dirSuggestions)
             
-            // Add file suggestions - case insensitive filtering, preserve original case
             let fileSuggestions = fileCache
                 .filter { $0.lowercased().hasPrefix(lastComponent.lowercased()) }
-                .map { components.dropLast().joined(separator: " ") + " " + $0 }
             suggestions.append(contentsOf: fileSuggestions)
             
-            // Special handling for cd command - only directories
             if firstComponent.lowercased() == "cd" {
                 suggestions = dirSuggestions
             }
         }
         
-        // Remove duplicates and sort
         return Array(Set(suggestions)).sorted()
     }
 }

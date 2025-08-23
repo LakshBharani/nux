@@ -22,7 +22,9 @@ struct SettingsView: View {
                 groupBox("Appearance") {
                     Picker("Theme", selection: $selectedTheme) {
                         ForEach(themes, id: \.0) { theme in
-                            Text(theme.0).tag(theme.0)
+                            Text(theme.0)
+                                .foregroundColor(themeManager.currentTheme.foregroundColor)
+                                .tag(theme.0)
                         }
                     }
                     .onChange(of: selectedTheme) {
@@ -43,17 +45,7 @@ struct SettingsView: View {
                 }
                 
                 groupBox("AI") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Gemini API Key").font(.subheadline)
-                        SecureField("Enter API key", text: Binding(
-                            get: { GeminiClient.shared.getApiKey() ?? "" },
-                            set: { GeminiClient.shared.setApiKey($0) }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        Text("Used for summarizing sessions without markdown artifacts.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    LLMSettingsView()
                 }
                 Spacer(minLength: 0)
             }
@@ -74,6 +66,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .background(themeManager.currentTheme.backgroundColor)
         .frame(minWidth: 520, idealWidth: 640, maxWidth: 800, minHeight: 480, idealHeight: 560, maxHeight: 900)
         .onAppear {
             // Load persisted selection
@@ -87,21 +80,25 @@ private extension SettingsView {
     func labeledRow(_ title: String, value: String) -> some View {
         HStack {
             Text(title)
+                .foregroundColor(themeManager.currentTheme.foregroundColor)
             Spacer()
-            Text(value).foregroundColor(.secondary)
+            Text(value)
+                .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.6))
         }
     }
     
     @ViewBuilder
     func groupBox(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
+            Text(title)
+                .font(.headline)
+                .foregroundColor(themeManager.currentTheme.foregroundColor)
             content()
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.03))
+                .fill(themeManager.currentTheme.backgroundColor.opacity(0.1))
         )
     }
 }

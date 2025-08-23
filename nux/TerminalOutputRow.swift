@@ -17,15 +17,11 @@ struct TerminalOutputRow: View {
     
     // Check if this command has an AI response
     private var hasAIResponse: Bool {
-        let hasResponse = aiContext.conversationHistory.contains { conversation in
+        return aiContext.conversationHistory.contains { conversation in
             conversation.attachedCommands.contains { attached in
                 attached.command == output.text && attached.timestamp == output.timestamp
             }
         }
-        if output.type == .command && hasResponse {
-            print("📱 [DEBUG] Rendering inline AI response for command: '\(output.text)'")
-        }
-        return hasResponse
     }
     
     // Get AI response for this command
@@ -136,20 +132,14 @@ struct TerminalOutputRow: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // Find and render the AI response
                     if let conversationId = UUID(uuidString: output.text) {
-                        let _ = print("🎨 [DEBUG] Looking for AI response with ID: \(conversationId)")
-                        let _ = print("🎨 [DEBUG] Available conversation IDs: \(aiContext.conversationHistory.map { $0.id })")
-                        
                         if let aiResponse = aiContext.conversationHistory.first(where: { $0.id == conversationId }) {
-                            let _ = print("🎨 [DEBUG] Found AI response, rendering block")
                             AIResponseViews.generalAIResponseView(response: aiResponse, themeManager: themeManager)
                         } else {
-                            let _ = print("🎨 [DEBUG] AI response not found in conversation history")
                             Text("AI Response not found (ID: \(conversationId))")
                                 .foregroundColor(.red)
                                 .font(.caption)
                         }
                     } else {
-                        let _ = print("🎨 [DEBUG] Invalid UUID in AI response text: '\(output.text)'")
                         Text("Invalid AI Response ID")
                             .foregroundColor(.red)
                             .font(.caption)
@@ -181,16 +171,7 @@ struct TerminalOutputRow: View {
         }
     }
     
-    private func debugNoAIResponse() {
-        print("🔍 [DEBUG] No AI response found for command")
-        print("🔍 [DEBUG] Available conversation entries: \(aiContext.conversationHistory.count)")
-        for (i, entry) in aiContext.conversationHistory.enumerated() {
-            print("🔍 [DEBUG] Entry \(i): attachedCommands.count = \(entry.attachedCommands.count)")
-            for attached in entry.attachedCommands {
-                print("🔍 [DEBUG]   - Command: '\(attached.command)', timestamp: \(attached.timestamp)")
-            }
-        }
-    }
+
     
     private func attachCommandAsContext() {
         let followingOutputs = getOutputsAfterCommand(at: outputIndex, in: allOutputs)
@@ -272,38 +253,27 @@ struct TerminalOutputRow: View {
     }
     
     private func attachOwnerAndEnableAgent() {
-        print("🔧 [DEBUG] attachOwnerAndEnableAgent() called")
-        
         // owner command for this error row
         let owner = allOutputs[ownerCommandIndex]
-        print("🔧 [DEBUG] Owner command: \(owner.text)")
         
         let following = getOutputsAfterCommand(at: ownerCommandIndex, in: allOutputs)
-        print("🔧 [DEBUG] Following outputs count: \(following.count)")
         
         let attached = AIAttachedCommand(from: owner, commandOutput: following)
-        print("🔧 [DEBUG] Created attached command: \(attached.command)")
         
         // Clear any existing attached commands and add this one
         aiContext.attachedCommands.removeAll()
         aiContext.attachedCommands.append(attached)
-        print("🔧 [DEBUG] Added command to context, total attached: \(aiContext.attachedCommands.count)")
         
         aiContext.isAIMode = true
-        print("🔧 [DEBUG] AI mode enabled: \(aiContext.isAIMode)")
         
         // Put "Fix this" directly in the input field
         currentCommand = "Fix this"
-        print("🔧 [DEBUG] Set currentCommand to: '\(currentCommand)'")
         
         // Focus the input field so user can start typing immediately
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            print("🔧 [DEBUG] Posting FocusInputField notification")
             // Trigger focus to input field
             NotificationCenter.default.post(name: NSNotification.Name("FocusInputField"), object: nil)
         }
-        
-        print("🔧 [DEBUG] attachOwnerAndEnableAgent() completed")
     }
 
     // Local keycap for inline strip

@@ -143,6 +143,13 @@ struct CommandInputView: View {
                         handleDownArrow()
                         return .handled
                     }
+                    .onKeyPress { key in
+                        if key.key == "c" && key.modifiers.contains(.control) {
+                            handleCtrlC()
+                            return .handled
+                        }
+                        return .ignored
+                    }
                     .onKeyPress(.tab) {
                         handleTab()
                         return .handled
@@ -169,7 +176,7 @@ struct CommandInputView: View {
     
     private func handleSubmit() {
         if autocomplete.showDropdown {
-            currentCommand = autocomplete.acceptSelectedSuggestion()
+            currentCommand = autocomplete.acceptSelectedSuggestion(currentInput: currentCommand)
             autocomplete.hideDropdown()
         } else {
             onExecuteCommand()
@@ -203,7 +210,7 @@ struct CommandInputView: View {
             } else {
                 // If there's only one suggestion, fill it directly
                 if autocomplete.allSuggestions.count == 1 {
-                    currentCommand = autocomplete.allSuggestions[0]
+                    currentCommand = autocomplete.acceptSelectedSuggestion(currentInput: currentCommand)
                     autocomplete.clearSuggestions()
                 } else {
                     // Multiple suggestions - show dropdown
@@ -215,6 +222,29 @@ struct CommandInputView: View {
     
     private func handleEscape() {
         autocomplete.hideDropdown()
+    }
+    
+    private func handleCtrlC() {
+        // Interrupt AI execution if active
+        if aiContext.isExecutingCommands || aiContext.isProcessing {
+            aiContext.interruptExecution()
+            
+            // Clear current command to prevent accidental execution
+            currentCommand = ""
+            
+            // Visual feedback - briefly exit AI mode to show interruption
+            let previousMode = aiContext.isAIMode
+            aiContext.exitAIMode()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                if previousMode {
+                    aiContext.enterAIMode()
+                }
+            }
+        } else {
+            // Standard Ctrl+C behavior: clear current command
+            currentCommand = ""
+        }
     }
 }
 

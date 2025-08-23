@@ -78,14 +78,6 @@ struct TerminalView: View {
                             .background(themeManager.currentTheme.backgroundColor)
                         }
                         .onChange(of: terminal.outputs.count) {
-                            print("📊 [DEBUG] Terminal outputs changed, count: \(terminal.outputs.count)")
-                            if let lastOutput = terminal.outputs.last {
-                                print("📊 [DEBUG] Last output type: \(lastOutput.type), text: '\(lastOutput.text)'")
-                                if lastOutput.type == .error {
-                                    print("🚨 [DEBUG] Error detected: '\(lastOutput.text)'")
-                                    print("📱 [DEBUG] Error action strip should be visible now")
-                                }
-                            }
                             withAnimation(.easeOut(duration: 0.3)) {
                                 proxy.scrollTo("bottom-spacer", anchor: .bottom)
                             }
@@ -134,7 +126,6 @@ struct TerminalView: View {
                 object: nil,
                 queue: .main
             ) { _ in
-                print("🔧 [DEBUG] FocusInputField notification received, setting isInputFocused = true")
                 isInputFocused = true
             }
             
@@ -147,7 +138,6 @@ struct TerminalView: View {
                 queue: .main
             ) { notification in
                 if let command = notification.object as? String {
-                    print("🚀 [DEBUG] ApproveRiskyCommand notification received: '\(command)'")
                     // Approve and execute the risky command
                     Task {
                         await aiContext.approveRiskyCommand(command)
@@ -186,10 +176,7 @@ struct TerminalView: View {
 
                 // Command+Enter handler — Fix with Agent
                 Button("Command+Enter Handler") {
-                    print("⌨️ [DEBUG] ⌘↩ shortcut triggered")
-                    
                     // Since commands are now executed autonomously, this shortcut is for "Fix with Agent"
-                    print("⌨️ [DEBUG] Doing Fix with Agent")
                     if let lastCommandIndex = findLastCommandIndex(in: terminal.outputs) {
                         let lastCommand = terminal.outputs[lastCommandIndex]
                         let following = getOutputsAfterCommand(at: lastCommandIndex, in: terminal.outputs)
@@ -201,8 +188,6 @@ struct TerminalView: View {
                         
                         aiContext.isAIMode = true
                         currentCommand = "Fix this"
-                        
-                        print("⌨️ [DEBUG] ⌘↩ shortcut completed - AI mode: \(aiContext.isAIMode), command: '\(currentCommand)'")
                     }
                     isInputFocused = true
                 }
@@ -213,35 +198,26 @@ struct TerminalView: View {
     }
     
     private func executeCommand() {
-        print("🚀 [DEBUG] executeCommand() called with: '\(currentCommand)'")
-        print("🚀 [DEBUG] AI mode: \(aiContext.isAIMode)")
-        
         guard !currentCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { 
-            print("🚀 [DEBUG] Empty command, returning early")
             return 
         }
         
         if aiContext.isAIMode {
-            print("🚀 [DEBUG] Executing AI prompt...")
             let promptToSend = currentCommand
             currentCommand = ""
-            print("🚀 [DEBUG] Cleared currentCommand, sending prompt: '\(promptToSend)'")
             // Execute AI prompt
             Task {
                 await aiContext.executeAIPrompt(promptToSend)
             }
         } else {
-            print("🚀 [DEBUG] Executing regular command...")
             // Execute regular command
             commandHistory.addCommand(currentCommand)
             autocomplete.addToHistory(currentCommand)
             terminal.executeCommand(currentCommand)
             currentCommand = ""
             autocomplete.clearSuggestions()
-            print("🚀 [DEBUG] Regular command executed")
         }
         
-        print("🚀 [DEBUG] Setting input focus")
         isInputFocused = true
     }
     

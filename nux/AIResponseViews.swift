@@ -130,6 +130,37 @@ struct AIResponseViews {
                     }
                 }
             }
+            
+            // AI Rethinking Steps Section
+            if !response.rethinkingSteps.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "brain.head.profile")
+                            .font(.system(size: 16))
+                            .foregroundColor(.orange)
+                            .frame(width: 20, height: 20)
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Rethinking:")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.orange)
+                                
+                                Spacer()
+                                
+                                Text("\(response.rethinkingSteps.count) step\(response.rethinkingSteps.count == 1 ? "" : "s")")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange.opacity(0.7))
+                            }
+                            
+                            ForEach(response.rethinkingSteps) { rethinkingStep in
+                                AIRethinkingStepView(step: rethinkingStep, themeManager: themeManager)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
 
             
             // Pending risky command approval
@@ -650,6 +681,123 @@ struct AIExecutedCommandView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(.purple.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - AI Rethinking Step View
+
+struct AIRethinkingStepView: View {
+    let step: AIRethinkingStep
+    let themeManager: ThemeManager
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Rethinking step header
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.orange)
+                    
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.red)
+                    
+                    Text("Failed: \(step.failedCommand)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.foregroundColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    
+                    Spacer()
+                    
+                    Text(step.timestamp, style: .time)
+                        .font(.system(size: 9))
+                        .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.5))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            // Expanded content
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Error message
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.red)
+                            Text("Error:")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.red)
+                        }
+                        
+                        Text(step.errorMessage)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.9))
+                            .padding(8)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                            )
+                    }
+                    
+                    // AI Analysis
+                    if !step.analysis.isEmpty && step.analysis != "Analyzing error and determining corrective action..." {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.orange)
+                                Text("Analysis:")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(.orange)
+                            }
+                            
+                            Text(step.analysis)
+                                .font(.system(size: 10))
+                                .foregroundColor(themeManager.currentTheme.foregroundColor.opacity(0.9))
+                                .padding(8)
+                                .background(Color.orange.opacity(0.1))
+                                .cornerRadius(6)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                                )
+                        }
+                    } else if step.analysis == "Analyzing error and determining corrective action..." {
+                        // Show thinking indicator
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Analyzing error and determining corrective action...")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                                .italic()
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+                }
+                .padding(.leading, 18) // Indent expanded content
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.05))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.2), lineWidth: 1)
         )
     }
 }

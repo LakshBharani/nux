@@ -14,7 +14,7 @@ struct TerminalSessionsView: View {
     @State private var sessions: [SessionItem] = []
     @State private var selectedId: UUID?
     @State private var isSummarizing = false
-    @State private var summary: GeminiClient.SessionSummary? = nil
+    @State private var summary: SessionSummary? = nil
     @State private var showSummarySheet = false
     @State private var showSettingsSheet = false
     @EnvironmentObject private var themeManager: ThemeManager
@@ -113,7 +113,7 @@ struct TerminalSessionsView: View {
         showSummarySheet = true
         Task { @MainActor in
             do {
-                let s = try await GeminiClient.shared.summarizeStructured(outputs: session.outputs)
+                let s = try await LLMManager.shared.summarizeStructured(outputs: session.outputs)
                 summary = s
             } catch {
                 summary = .init(
@@ -213,7 +213,7 @@ private extension TerminalSessionsView {
 private struct SummarySheet: View {
     @EnvironmentObject var themeManager: ThemeManager
     let isLoading: Bool
-    let summary: GeminiClient.SessionSummary?
+    let summary: SessionSummary?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

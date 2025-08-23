@@ -67,6 +67,21 @@ struct AIExecutedCommand: Codable, Identifiable {
     }
 }
 
+struct AIRethinkingStep: Codable, Identifiable {
+    let id = UUID()
+    let failedCommand: String
+    let errorMessage: String
+    let analysis: String
+    let timestamp: Date
+    
+    init(failedCommand: String, errorMessage: String, analysis: String) {
+        self.failedCommand = failedCommand
+        self.errorMessage = errorMessage
+        self.analysis = analysis
+        self.timestamp = Date()
+    }
+}
+
 struct AIConversationEntry: Codable, Identifiable {
     let id: UUID
     let prompt: String
@@ -76,8 +91,9 @@ struct AIConversationEntry: Codable, Identifiable {
     let suggestedCommand: String?
     let executedCommands: [AIExecutedCommand] // Commands executed by AI during this conversation
     let pendingRiskyCommand: String? // Risky command awaiting user approval
+    let rethinkingSteps: [AIRethinkingStep] // AI rethinking process for failed commands
     
-    init(prompt: String, response: String, attachedCommands: [AIAttachedCommand], suggestedCommand: String?, executedCommands: [AIExecutedCommand] = [], pendingRiskyCommand: String? = nil) {
+    init(prompt: String, response: String, attachedCommands: [AIAttachedCommand], suggestedCommand: String?, executedCommands: [AIExecutedCommand] = [], pendingRiskyCommand: String? = nil, rethinkingSteps: [AIRethinkingStep] = []) {
         self.id = UUID()
         self.prompt = prompt
         self.response = response
@@ -86,9 +102,10 @@ struct AIConversationEntry: Codable, Identifiable {
         self.suggestedCommand = suggestedCommand
         self.executedCommands = executedCommands
         self.pendingRiskyCommand = pendingRiskyCommand
+        self.rethinkingSteps = rethinkingSteps
     }
     
-    init(id: UUID, prompt: String, response: String, attachedCommands: [AIAttachedCommand], suggestedCommand: String?, executedCommands: [AIExecutedCommand] = [], pendingRiskyCommand: String? = nil) {
+    init(id: UUID, prompt: String, response: String, attachedCommands: [AIAttachedCommand], suggestedCommand: String?, executedCommands: [AIExecutedCommand] = [], pendingRiskyCommand: String? = nil, rethinkingSteps: [AIRethinkingStep] = []) {
         self.id = id
         self.prompt = prompt
         self.response = response
@@ -97,6 +114,7 @@ struct AIConversationEntry: Codable, Identifiable {
         self.suggestedCommand = suggestedCommand
         self.executedCommands = executedCommands
         self.pendingRiskyCommand = pendingRiskyCommand
+        self.rethinkingSteps = rethinkingSteps
     }
 }
 
@@ -113,25 +131,39 @@ class AIContextManager: ObservableObject {
     @Published var lastSuggestedCommand: String = ""
     @Published var isExecutingCommands = false // AI is autonomously executing commands
     @Published var currentExecutionCommands: [AIExecutedCommand] = []
+    @Published var shouldInterruptExecution = false // Flag to interrupt AI execution via Ctrl+C
     
     // Contextual information cache
     private var cachedDirectoryListing: String = "" // Commands being executed in current session
     
-    private let geminiClient = GeminiClient.shared
+    private let llmManager = LLMManager.shared
     weak var terminalSession: TerminalSession?
+    
+    // MARK: - AI Execution Control
+    
+    func interruptExecution() {
+        shouldInterruptExecution = true
+        isExecutingCommands = false
+        isProcessing = false
+    }
+    
+    private func checkForInterruption() -> Bool {
+        if shouldInterruptExecution {
+            shouldInterruptExecution = false
+            isExecutingCommands = false
+            return true
+        }
+        return false
+    }
     
     // MARK: - AI Mode Management
     
     func toggleAIMode() {
-        print("🔄 [DEBUG] toggleAIMode() called, current state: \(isAIMode)")
         isAIMode.toggle()
-        print("🔄 [DEBUG] AI mode toggled to: \(isAIMode)")
         if !isAIMode {
-            print("🔄 [DEBUG] AI mode disabled, marking context reset point")
             // Set context reset point to exclude older conversations from context
             // but keep them visible in UI
             contextResetPoint = max(0, conversationHistory.count - 1)
-            print("🔄 [DEBUG] Set context reset point to \(contextResetPoint), keeping \(conversationHistory.count) visible conversations")
             // Clear active state
             clearActiveState()
         }
@@ -143,11 +175,9 @@ class AIContextManager: ObservableObject {
     
     func exitAIMode() {
         isAIMode = false
-        print("🔄 [DEBUG] AI mode exited, marking context reset point")
         // Set context reset point to exclude older conversations from context
         // but keep them visible in UI
         contextResetPoint = max(0, conversationHistory.count - 1)
-        print("🔄 [DEBUG] Set context reset point to \(contextResetPoint), keeping \(conversationHistory.count) visible conversations")
         clearActiveState()
     }
     
@@ -181,6 +211,9 @@ class AIContextManager: ObservableObject {
     
     func executeCommandAutonomously(_ command: String) async {
         guard let terminal = terminalSession else { return }
+        
+        // Check for interruption before execution
+        if checkForInterruption() { return }
         
         let isRisky = assessCommandRisk(command)
         
@@ -380,6 +413,19 @@ class AIContextManager: ObservableObject {
     }
     
     private func analyzeErrorAndRetry(_ failedCommand: AIExecutedCommand) async {
+        // Check for interruption
+        if checkForInterruption() { return }
+        
+        // Add rethinking step to the current conversation
+        let rethinkingStep = AIRethinkingStep(
+            failedCommand: failedCommand.command,
+            errorMessage: failedCommand.error ?? "Unknown error",
+            analysis: "Analyzing error and determining corrective action..."
+        )
+        
+        // Update the latest conversation entry with rethinking step
+        addRethinkingStep(rethinkingStep)
+        
         // Build context for AI to analyze the error and suggest a retry
         let errorContext = """
         Command failed: \(failedCommand.command)
@@ -390,18 +436,32 @@ class AIContextManager: ObservableObject {
         Please analyze this error and suggest a corrected command if possible. If you need more information, suggest diagnostic commands to run first.
         """
         
-        // Let AI analyze and potentially suggest a retry
-        await executeAIPrompt(errorContext)
+        // Get AI response for retry WITHOUT creating a new conversation entry
+        do {
+            let action = try await sendActionPrompt(errorContext)
+            
+            // Update the rethinking step with the AI analysis
+            updateRethinkingStep(rethinkingStep.id, analysis: action.explanation)
+            
+            // If AI suggests a fix command, execute it
+            if !action.suggestedCommand.isEmpty && action.autoExecute {
+                await executeCommandAutonomously(action.suggestedCommand)
+            }
+        } catch {
+            updateRethinkingStep(rethinkingStep.id, analysis: "Failed to analyze error: \(error.localizedDescription)")
+        }
     }
     
     private func continueTaskIfNeeded(_ successfulCommand: AIExecutedCommand) async {
+        // Check for interruption
+        if checkForInterruption() { return }
+        
         // Get the latest entry which contains the original user prompt and context
         guard let lastEntry = conversationHistory.last else { return }
         
         // Don't continue if this was already a retry/continuation to avoid infinite loops
         let executedCommands = lastEntry.executedCommands
         if executedCommands.count >= 3 {
-            print("🤖 [DEBUG] Stopping autonomous execution after 3 commands to prevent infinite loops")
             return
         }
         
@@ -418,21 +478,14 @@ class AIContextManager: ObservableObject {
         
         // Get AI response for next step WITHOUT creating a new conversation entry
         do {
-            print("🤖 [DEBUG] Asking AI for next step in task continuation...")
             let action = try await sendActionPrompt(contextPrompt)
-            print("🤖 [DEBUG] AI continuation response: \(action.explanation)")
-            print("🤖 [DEBUG] Next suggested command: '\(action.suggestedCommand)'")
-            print("🤖 [DEBUG] AutoExecute flag: \(action.autoExecute)")
             
             // If AI suggests another command and wants to auto-execute it, do so
             if !action.suggestedCommand.isEmpty && action.autoExecute {
-                print("🤖 [DEBUG] Continuing autonomous execution with: '\(action.suggestedCommand)'")
                 await executeCommandAutonomously(action.suggestedCommand)
-            } else {
-                print("🤖 [DEBUG] Task continuation complete - no more commands needed")
             }
         } catch {
-            print("🤖 [ERROR] Failed to get AI continuation response: \(error)")
+            // Continue silently on error
         }
     }
     
@@ -463,58 +516,37 @@ class AIContextManager: ObservableObject {
     private func gatherContextualInfo() async {
         guard let terminal = terminalSession else { return }
         
-        print("🤖 [DEBUG] Gathering contextual information...")
-        
         // Get current directory listing with details
         let result = await terminal.executeCommandSilently("ls -lAh")
         if result.error == nil {
             cachedDirectoryListing = result.output
-            print("🤖 [DEBUG] Cached directory listing (\(result.output.count) chars)")
         } else {
             cachedDirectoryListing = "Error getting directory listing: \(result.error ?? "Unknown error")"
-            print("🤖 [DEBUG] Failed to get directory listing: \(result.error ?? "Unknown")")
         }
     }
     
     // MARK: - AI Prompt Execution
     
     func executeAIPrompt(_ prompt: String) async {
-        print("🤖 [DEBUG] executeAIPrompt() called with: '\(prompt)'")
-        
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { 
-            print("🤖 [DEBUG] Empty prompt, returning early")
             return 
         }
         
-        print("🤖 [DEBUG] Starting AI processing...")
         isProcessing = true
         lastError = nil
         
-        // Clear execution commands from previous conversations - each conversation should start fresh
         currentExecutionCommands.removeAll()
-        print("🤖 [DEBUG] Cleared previous execution commands, starting fresh conversation")
         
         do {
-            // Gather contextual information before sending to AI
             await gatherContextualInfo()
             
-            print("🤖 [DEBUG] Sending action prompt to AI...")
             let action = try await sendActionPrompt(prompt)
-            print("🤖 [DEBUG] AI response received: \(action.explanation)")
-            print("🤖 [DEBUG] Raw AI response - autoExecute: \(action.autoExecute), command: '\(action.suggestedCommand)', risk: \(action.risk)")
-            print("🤖 [DEBUG] User prompt was: '\(prompt)'")
-            print("🤖 [DEBUG] Has attached commands: \(!attachedCommands.isEmpty)")
-            print("🤖 [DEBUG] Conversation history count: \(conversationHistory.count)")
             
             let responseText = renderActionForDisplay(action)
             lastSuggestedCommand = action.suggestedCommand
-            print("🤖 [DEBUG] Suggested command: '\(action.suggestedCommand)'")
             
-            // Store attached commands for this conversation entry, then clear them
             let conversationAttachedCommands = attachedCommands
-            print("🤖 [DEBUG] Creating conversation entry with \(conversationAttachedCommands.count) attached commands")
             
-            // Create conversation entry with the attached commands (if any)
             let conversationEntry = AIConversationEntry(
                 prompt: prompt, 
                 response: responseText, 
@@ -523,46 +555,32 @@ class AIContextManager: ObservableObject {
                 executedCommands: currentExecutionCommands
             )
             conversationHistory.append(conversationEntry)
-            print("🤖 [DEBUG] Added conversation entry, total history: \(conversationHistory.count)")
-            print("🤖 [DEBUG] New entry has \(conversationEntry.attachedCommands.count) attached commands")
-            print("🤖 [DEBUG] New entry isEmpty filter result: \(conversationEntry.attachedCommands.isEmpty)")
             
-            // Add AI response as a terminal output entry so it appears in the main terminal flow
             terminalSession?.addAIResponse(conversationEntry)
             
-            // Clear attached commands after creating the conversation entry to avoid clutter in future entries
             attachedCommands.removeAll()
-            print("🤖 [DEBUG] Cleared attached commands")
             
-            // ALWAYS autonomously execute commands - no more suggested commands
-            // Only skip execution if the command is empty
             if !action.suggestedCommand.isEmpty {
-                print("🤖 [DEBUG] Autonomously executing command: '\(action.suggestedCommand)'")
                 await executeCommandAutonomously(action.suggestedCommand)
-            } else {
-                print("🤖 [DEBUG] No command to execute from AI response")
             }
             
-            // Clear current execution commands (they're now part of the conversation history)
             currentExecutionCommands.removeAll()
             
         } catch {
-            print("🤖 [DEBUG] AI processing error: \(error.localizedDescription)")
             lastError = error.localizedDescription
         }
         
-        print("🤖 [DEBUG] AI processing completed")
         isProcessing = false
     }
     
-    private func sendActionPrompt(_ prompt: String) async throws -> GeminiClient.AgentAction {
+    private func sendActionPrompt(_ prompt: String) async throws -> AgentAction {
         let systemPrompt = buildSystemPrompt()
         let userPrompt = buildUserPrompt(prompt)
         let fullPrompt = systemPrompt + "\n\n" + userPrompt
-        return try await geminiClient.generateAction(prompt: fullPrompt)
+        return try await llmManager.generateAction(prompt: fullPrompt)
     }
 
-    private func renderActionForDisplay(_ a: GeminiClient.AgentAction) -> String {
+    private func renderActionForDisplay(_ a: AgentAction) -> String {
         var lines: [String] = []
         if !a.explanation.isEmpty { lines.append(a.explanation) }
         if !a.suggestedCommand.isEmpty { lines.append("Suggested: " + a.suggestedCommand) }
@@ -720,6 +738,56 @@ class AIContextManager: ObservableObject {
         return lines.joined(separator: "\n")
     }
     
+    // MARK: - Rethinking Step Management
+    
+    private func addRethinkingStep(_ step: AIRethinkingStep) {
+        guard !conversationHistory.isEmpty else { return }
+        
+        let lastIndex = conversationHistory.count - 1
+        let originalEntry = conversationHistory[lastIndex]
+        let updatedEntry = AIConversationEntry(
+            id: originalEntry.id,
+            prompt: originalEntry.prompt,
+            response: originalEntry.response,
+            attachedCommands: originalEntry.attachedCommands,
+            suggestedCommand: originalEntry.suggestedCommand,
+            executedCommands: originalEntry.executedCommands,
+            pendingRiskyCommand: originalEntry.pendingRiskyCommand,
+            rethinkingSteps: originalEntry.rethinkingSteps + [step]
+        )
+        conversationHistory[lastIndex] = updatedEntry
+    }
+    
+    private func updateRethinkingStep(_ stepId: UUID, analysis: String) {
+        guard !conversationHistory.isEmpty else { return }
+        
+        let lastIndex = conversationHistory.count - 1
+        let originalEntry = conversationHistory[lastIndex]
+        
+        let updatedSteps = originalEntry.rethinkingSteps.map { step in
+            if step.id == stepId {
+                return AIRethinkingStep(
+                    failedCommand: step.failedCommand,
+                    errorMessage: step.errorMessage,
+                    analysis: analysis
+                )
+            }
+            return step
+        }
+        
+        let updatedEntry = AIConversationEntry(
+            id: originalEntry.id,
+            prompt: originalEntry.prompt,
+            response: originalEntry.response,
+            attachedCommands: originalEntry.attachedCommands,
+            suggestedCommand: originalEntry.suggestedCommand,
+            executedCommands: originalEntry.executedCommands,
+            pendingRiskyCommand: originalEntry.pendingRiskyCommand,
+            rethinkingSteps: updatedSteps
+        )
+        conversationHistory[lastIndex] = updatedEntry
+    }
+    
     // MARK: - Helper Methods
     
     private func isActionPrompt(_ prompt: String) -> Bool {
@@ -748,7 +816,6 @@ class AIContextManager: ObservableObject {
         
         // If it has action keywords and no question keywords, it's an action request
         let isAction = hasActionKeyword && !hasQuestionKeyword
-        print("🤖 [DEBUG] Action detection - prompt: '\(prompt)', hasAction: \(hasActionKeyword), hasQuestion: \(hasQuestionKeyword), isAction: \(isAction)")
         return isAction
     }
     

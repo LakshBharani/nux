@@ -266,7 +266,7 @@ struct ControlBarSimplified: View {
                             currentInput: currentCommand,
                             onItemClick: { index in
                                 autocomplete.selectIndex(index)
-                                currentCommand = autocomplete.acceptSelectedSuggestion()
+                                currentCommand = autocomplete.acceptSelectedSuggestion(currentInput: currentCommand)
                             }
                         )
                         .environmentObject(themeManager)

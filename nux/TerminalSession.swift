@@ -132,14 +132,12 @@ class TerminalSession: ObservableObject {
     }
     
     func executeCommand(_ command: String) {
-        print("🖥️ [DEBUG] TerminalSession.executeCommand() called with: '\(command)'")
         let startTime = Date()
         let commandDirectory = currentDirectory
         
         // Add command to output
         outputs.append(TerminalOutput(text: command, type: .command, prompt: prompt))
         let commandIndex = outputs.count - 1
-        print("🖥️ [DEBUG] Added command to outputs, index: \(commandIndex)")
         
         // Handle built-in commands
         if handleBuiltInCommand(command) {
@@ -162,6 +160,7 @@ class TerminalSession: ObservableObject {
                 process.standardOutput = outputPipe
                 process.standardError = errorPipe
                 process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.currentDirectoryURL = URL(fileURLWithPath: self.currentDirectory)
                 
                 // Use cached environment or fallback to basic environment
                 if let cachedEnv = self.cachedEnvironment {
@@ -172,11 +171,8 @@ class TerminalSession: ObservableObject {
                     process.environment = env
                 }
                 
-                // Execute command in current directory
-                let shellCommand = """
-                cd '\(self.currentDirectory)' && \(command)
-                """
-                process.arguments = ["-c", shellCommand]
+                // Execute command in current directory exactly as typed
+                process.arguments = ["-c", command]
                 
                 do {
                     try process.run()
@@ -186,9 +182,14 @@ class TerminalSession: ObservableObject {
                     
                     process.waitUntilExit()
                     
+                    let exitStatus = process.terminationStatus
+                    let commandSucceeded = (exitStatus == 0)
+                    
                     let output = String(data: outputData, encoding: .utf8) ?? ""
                     let error = String(data: errorData, encoding: .utf8)
-                    let errorText = (error?.isEmpty == false) ? error : nil
+                    
+                    // Only return stderr as error if command actually failed
+                    let errorText = (commandSucceeded || error?.isEmpty != false) ? nil : error
                     
                     continuation.resume(returning: (output.trimmingCharacters(in: .whitespacesAndNewlines), errorText?.trimmingCharacters(in: .whitespacesAndNewlines)))
                 } catch {
@@ -308,9 +309,6 @@ class TerminalSession: ObservableObject {
         if FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory) && isDirectory.boolValue {
             currentDirectory = expandedPath
             setupPrompt()
-            print("🖥️ [DEBUG] AI updated terminal directory to: \(currentDirectory)")
-        } else {
-            print("🖥️ [DEBUG] AI attempted to change to non-existent directory: \(expandedPath)")
         }
     }
     
@@ -324,14 +322,12 @@ class TerminalSession: ObservableObject {
             directory: currentDirectory
         )
         outputs.append(aiOutput)
-        print("🖥️ [DEBUG] Added AI response to terminal outputs at index \(outputs.count - 1)")
     }
     
     // Execute command for AI through main terminal session but capture output without visible display
     func executeCommandForAI(_ command: String) async -> (output: String, error: String?) {
         return await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
-                print("🖥️ [DEBUG] AI executing command through main terminal: '\(command)'")
                 let startTime = Date()
                 let commandDirectory = self.currentDirectory
                 let originalOutputCount = self.outputs.count
@@ -384,6 +380,7 @@ class TerminalSession: ObservableObject {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory)
         
         // Use cached environment or fallback to basic environment
         if let cachedEnv = cachedEnvironment {
@@ -394,9 +391,9 @@ class TerminalSession: ObservableObject {
             process.environment = env
         }
         
-        // Execute in current directory and capture new directory state
+        // Execute user command exactly as typed, then separately get directory
         let shellCommand = """
-        cd '\(currentDirectory)' && \(command) && pwd
+        \(command); echo "==PWD=="; pwd
         """
         process.arguments = ["-c", shellCommand]
         
@@ -409,23 +406,37 @@ class TerminalSession: ObservableObject {
                 
                 process.waitUntilExit()
                 
+                let exitStatus = process.terminationStatus
+                let commandSucceeded = (exitStatus == 0)
+                
                 let output = String(data: outputData, encoding: .utf8) ?? ""
                 let errorOutput = String(data: errorData, encoding: .utf8)
                 
-                // Extract directory info from output
+                // Extract directory info from output using our marker
                 let outputLines = output.components(separatedBy: .newlines)
-                let newDirectory = outputLines.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let commandOutput = outputLines.dropLast().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                var commandOutput = ""
+                var newDirectory = ""
+                
+                // Find the PWD marker and split output accordingly
+                if let pwdIndex = outputLines.firstIndex(of: "==PWD==") {
+                    commandOutput = outputLines[0..<pwdIndex].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if pwdIndex + 1 < outputLines.count {
+                        newDirectory = outputLines[pwdIndex + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                } else {
+                    // Fallback if marker not found
+                    commandOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
                 
                 DispatchQueue.main.async {
                     // Update directory if it changed and this is for AI (commandIndex == -1)
                     if commandIndex == -1 && !newDirectory.isEmpty && newDirectory != self.currentDirectory {
                         self.currentDirectory = newDirectory
                         self.setupPrompt()
-                        print("🖥️ [DEBUG] AI command updated directory to: \(self.currentDirectory)")
                     }
                     
-                    let finalError = (errorOutput?.isEmpty == false) ? errorOutput : nil
+                    // Only return stderr as error if command actually failed
+                    let finalError = (commandSucceeded || errorOutput?.isEmpty != false) ? nil : errorOutput
                     completion(commandOutput, finalError)
                 }
             } catch {
@@ -444,6 +455,7 @@ class TerminalSession: ObservableObject {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory)
         
         // Use cached environment or fallback to basic environment
         if let cachedEnv = cachedEnvironment {
@@ -454,9 +466,9 @@ class TerminalSession: ObservableObject {
             process.environment = env
         }
         
-        // Simple command execution without loading shell config every time
+        // Execute the user's command exactly as typed, then check for directory changes
         let shellCommand = """
-        cd '\(currentDirectory)' && \(command) && pwd
+        \(command); echo "==PWD=="; pwd
         """
         process.arguments = ["-c", shellCommand]
         
@@ -468,34 +480,45 @@ class TerminalSession: ObservableObject {
             
             process.waitUntilExit()
             
-            // Split the output to separate command output from the pwd result
+            let exitStatus = process.terminationStatus
+            let commandSucceeded = (exitStatus == 0)
+            
+            // Parse output and extract directory info
             if !outputData.isEmpty {
-                if let raw = String(data: outputData, encoding: .utf8) {
-                    // Trim trailing newlines so the last non-empty line is truly the pwd
-                    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        let lines = trimmed.components(separatedBy: .newlines)
-                        if let last = lines.last {
-                            let newDirectory = last.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !newDirectory.isEmpty && newDirectory != currentDirectory {
-                                currentDirectory = newDirectory
-                                setupPrompt()
-                            }
+                if let output = String(data: outputData, encoding: .utf8) {
+                    let outputLines = output.components(separatedBy: .newlines)
+                    var commandOutput = ""
+                    var newDirectory = ""
+                    
+                    // Find the PWD marker and split output accordingly
+                    if let pwdIndex = outputLines.firstIndex(of: "==PWD==") {
+                        commandOutput = outputLines[0..<pwdIndex].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if pwdIndex + 1 < outputLines.count {
+                            newDirectory = outputLines[pwdIndex + 1].trimmingCharacters(in: .whitespacesAndNewlines)
                         }
-                        // All lines except the last are the command output
-                        let commandOutput = lines.dropLast().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !commandOutput.isEmpty {
-                            outputs.append(TerminalOutput(text: commandOutput, type: .output))
-                        }
+                    } else {
+                        // Fallback if marker not found
+                        commandOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    
+                    // Display command output
+                    if !commandOutput.isEmpty {
+                        outputs.append(TerminalOutput(text: commandOutput, type: .output))
+                    }
+                    
+                    // Update directory if it changed
+                    if !newDirectory.isEmpty && newDirectory != currentDirectory {
+                        currentDirectory = newDirectory
+                        setupPrompt()
                     }
                 }
             }
             
+            // Only treat stderr as error if the command actually failed (non-zero exit status)
             if !errorData.isEmpty {
                 if let error = String(data: errorData, encoding: .utf8) {
                     let trimmedError = error.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmedError.isEmpty {
-                        print("🖥️ [DEBUG] Adding error output: '\(trimmedError)'")
+                    if !trimmedError.isEmpty && !commandSucceeded {
                         outputs.append(TerminalOutput(text: trimmedError, type: .error))
                     }
                 }

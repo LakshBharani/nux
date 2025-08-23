@@ -91,7 +91,7 @@ struct AutocompletePopup: View {
                         
                         // Details box
                         HStack {
-                            Text(suggestions[selectedIndex])
+                            Text(getCompletionWord(from: suggestions[selectedIndex]))
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(themeManager.currentTheme.foregroundColor)
                                 .padding(.horizontal, 8)
@@ -144,6 +144,7 @@ struct AutocompletePopup: View {
             return URL(fileURLWithPath: suggestion).lastPathComponent
         }
         
+        // For single word suggestions, return the full suggestion
         return suggestion
     }
     
