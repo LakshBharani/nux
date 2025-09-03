@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -41,6 +45,8 @@ jobs:
         with:
           files: release/*.zip
           generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
