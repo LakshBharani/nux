@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.0"
+
+      - name: Build nux
+        run: |
+          xcodebuild -project nux.xcodeproj \
+                     -scheme nux \
+                     -configuration Release \
+                     SYMROOT=build \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGNING_ALLOWED=NO
+
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          cp -R build/Release/nux.app release/
+          cd release
+          zip -r "nux-${GITHUB_REF#refs/tags/}.zip" "nux.app"
+          cd ..
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          - name: Calculate SHA256
+      run: |
+        echo "SHA256 for Homebrew cask:"
+        shasum -a 256 release/*.zip
+        echo ""
+        echo "📋 Next steps:"
+        echo "1. Update Casks/nux.rb with the new version and SHA256"
+        echo "2. Commit and push to your homebrew-tap repository"
+        echo "3. Users can then run: brew tap yourusername/tap && brew install --cask nux"

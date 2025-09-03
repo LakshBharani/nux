@@ -131,7 +131,7 @@ class LLMManager: ObservableObject {
             }
         }
         
-        await MainActor.run {
+        await MainActor.run {2
             self.availableProviders = available
             
             // If current provider is not available, switch to first available

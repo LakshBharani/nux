@@ -1,6 +1,24 @@
 ## nux
 
-nux is a native macOS terminal built with SwiftUI. It focuses on a calm, fast experience with bottom‑aligned output (like a messages app), focused autocomplete, renameable tabs/sessions, and concise AI session summaries. The plan is to ship a polished, privacy‑respecting build to the Mac App Store.
+nux is a native macOS terminal built with SwiftUI. It focuses on a calm, fast experience with bottom‑aligned output (like a messages app), focused autocomplete, renameable tabs/sessions, and concise AI session summaries.
+
+### Installation
+
+#### Via Homebrew Tap (recommended)
+
+```bash
+# Add the nux tap
+brew tap yourusername/tap
+
+# Install nux
+brew install --cask nux
+```
+
+#### Manual Installation
+
+1. Download the latest release from [GitHub Releases](https://github.com/yourusername/nux/releases)
+2. Extract the zip file
+3. Drag `nux.app` to your Applications folder
 
 ### Status
 
