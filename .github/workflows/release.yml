@@ -44,12 +44,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          - name: Calculate SHA256
-      run: |
-        echo "SHA256 for Homebrew cask:"
-        shasum -a 256 release/*.zip
-        echo ""
-        echo "📋 Next steps:"
-        echo "1. Update Casks/nux.rb with the new version and SHA256"
-        echo "2. Commit and push to your homebrew-tap repository"
-        echo "3. Users can then run: brew tap yourusername/tap && brew install --cask nux"
+      - name: Calculate SHA256
+        run: |
+          echo "SHA256 for Homebrew cask:"
+          shasum -a 256 release/*.zip
+          echo ""
+          echo "📋 Next steps:"
+          echo "1. Update Casks/nux.rb with the new version and SHA256"
+          echo "2. Commit and push to your homebrew-tap repository"
+          echo "3. Users can then run: brew tap LakshBharani/tap && brew install --cask nux"
