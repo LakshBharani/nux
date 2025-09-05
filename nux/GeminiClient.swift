@@ -96,7 +96,7 @@ final class GeminiClient {
     static let shared = GeminiClient()
     private init() {}
     
-    private let model = "gemini-1.5-flash"
+    private let model = "gemini-2.5-flash"
     private let endpointBase = "https://generativelanguage.googleapis.com/v1beta/models/"
     private let apiKeyDefaultsKey = "GeminiAPIKey"
     
