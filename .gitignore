@@ -6,35 +6,52 @@ DerivedData/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/
+*.xcodeproj/xcshareddata/
 
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.apdisk
 
 # Release builds
 release/
+dist/
 *.zip
+*.dmg
+*.pkg
+*.app.zip
 
 # Swift Package Manager
 .build/
 Packages/
 Package.pins
 Package.resolved
-*.xcodeproj
+.swiftpm/
+.swiftpm/
 
 # CocoaPods
 Pods/
 *.xcworkspace
+Podfile.lock
 
 # Carthage
 Carthage/Build/
+Carthage/Checkouts/
 
 # fastlane
 fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
+fastlane/readme.md
 
 # Code Injection
 iOSInjectionProject/
@@ -43,6 +60,92 @@ iOSInjectionProject/
 *.swp
 *.swo
 *~
+*.tmp
+*.temp
 
 # Logs
 *.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# API Keys and secrets
+secrets.plist
+config.plist
+*.key
+*.pem
+
+# Test results
+TestResults/
+*.testresult
+
+# Coverage reports
+*.gcov
+*.gcno
+*.gcda
+coverage/
+
+# Profiling data
+*.prof
+*.trace
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Archive files
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Node modules (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Ruby (if any)
+*.gem
+*.rbc
+/.config
+/coverage/
+/InstalledFiles
+/pkg/
+/spec/reports/
+/spec/examples.txt
+/test/tmp/
+/test/version_tmp/
+/tmp/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Local configuration
+local.properties
+local.xcconfig
